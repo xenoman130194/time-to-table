@@ -236,3 +236,20 @@ tauri build   # или
 ---
 
 *последнее обновление: февраль 2026*
+
+## Подпись коммитов (GPG)
+
+- Рекомендуется подписывать коммиты GPG, чтобы подтверждать авторство и целостность.
+- Основные шаги:
+  - Сгенерировать ключ: `gpg --full-generate-key` (или использовать GUI/ключницу).
+  - Экспортировать публичный ключ: `gpg --armor --export <FPR> > pubkey.asc` и добавить содержимое в GitHub (Settings  SSH and GPG keys  New GPG key).
+  - В Git установить соответствующие настройки:
+    - `git config user.email "your_gpg_uid_email@users.noreply.github.com"`
+    - `git config user.signingkey <FPR>`
+    - `git config --global gpg.program "gpg"`
+    - `git config --global commit.gpgsign true`
+  - Подписывать коммиты: `git commit -S -m "Your message"` (при включённом `commit.gpgsign` подпись ставится автоматически).
+- Подсказки:
+  - Если GitHub показывает "The email in this signature doesn't match", установите `user.email` в тот же адрес, что и у GPG UID (часто это `#####+username@users.noreply.github.com`).
+  - На Windows может потребоваться включить loopback pinentry для автоматизации: `gpg --pinentry-mode loopback` или настройка `gpg-agent`.
+  - Если в репозитории включено требование подписанных коммитов (branch protection), убедитесь, что публичный ключ добавлен в ваш профиль GitHub и email совпадает.
