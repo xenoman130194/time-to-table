@@ -1,4 +1,4 @@
-# Time-SAP v0.6.2 (Калькулятор для ленивых)
+# Time-To-Table v0.6.2 (Калькулятор для ленивых)
 
 > автор: Галимзянов Г.Р.
 
@@ -157,7 +157,7 @@ tauri-app/
 ## Где хранятся данные
 
 ```
-C:\Users\<ИМЯ>\AppData\Local\com.timesap.calculator\
+C:\Users\<ИМЯ>\AppData\Local\com.timetotable.calculator\
 └── EBWebView\Default\Local Storage\
 ```
 
