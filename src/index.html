@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ipc: https://ipc.localhost">
+    <meta http-equiv="X-Frame-Options" content="DENY">
+    <meta http-equiv="X-XSS-Protection" content="1; mode=block">
+    <meta http-equiv="Strict-Transport-Security" content="max-age=63072000; includeSubDomains; preload">
+    <meta name="csrf-token" content="" id="csrfMeta">
+    <title>Калькулятор для ленивых v0.6.2</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="card">
+    <div class="header-row">
+        <h2>
+            Калькулятор для ленивых (вроде меня) 
+            <span>v0.6.2 by Галимзянов Г.Р.</span>
+        </h2>
+        <div class="btn-group-row">
+            <button class="btn-sm" id="clearBtn">Очистить</button>
+            <button class="btn-sm" id="importBtn">Импорт (JSON)</button>
+            <button class="btn-sm" id="exportBtn">Экспорт (JSON)</button>
+            <input type="file" id="fileInput" accept=".json">
+        </div>
+    </div>
+
+    <div class="setup-grid">
+        <div class="input-group">
+            <label for="techCardSelect">Техкарта (Шаблон)</label>
+            <div>
+                <select id="techCardSelect">
+                    <option value="manual">-- Ручной ввод --</option>
+                    <optgroup label="Сохраненные" id="userCards"></optgroup>
+                </select>
+                <button class="btn-sm" id="saveCardBtn">💾</button>
+                <button class="btn-sm" id="deleteCardBtn">✖</button>
+            </div>
+        </div>
+        <div class="input-group"><label for="startDate">Дата Начала</label><input type="date" id="startDate"></div>
+        <div class="input-group"><label for="startTime">Время Начала</label><input type="time" id="startTime" step="1" value="08:00:00"></div>
+        
+        <div class="input-group">
+            <fieldset style="border:none; padding:0; margin:0;">
+                <legend style="font-weight:600; margin-bottom:6px;">Режим</legend>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="chainMode" checked>
+                    <label for="chainMode">Цепочка</label>
+                </div>
+            </fieldset>
+        </div>
+
+        <div class="lunch-row">
+            <div class="lunch-field">
+                <label for="lunchStart">Обед 1 (12:00)</label>
+                <input type="time" id="lunchStart" value="12:00">
+            </div>
+            <div class="lunch-field">
+                <label for="lunchStart2">Обед 2 (00:00)</label>
+                <input type="time" id="lunchStart2" value="00:00">
+            </div>
+            <div class="lunch-duration">
+                <label for="lunchDur">Обед (мин)</label>
+                <input type="number" id="lunchDur" value="45" min="0" max="480" step="5">
+            </div>
+        </div>
+
+        <div class="input-group"><label for="totalOps">Кол-во операций</label><input type="number" id="totalOps" min="1" max="50" value="1"></div>
+        <div class="input-group"><label for="workerCount">Исполнителей</label><input type="number" id="workerCount" min="1" max="20" value="1"></div>
+        
+        <div class="input-group">
+            <label for="timeMode">Тип задания времени</label>
+            <select id="timeMode">
+                <option value="per_worker">На каждого</option>
+                <option value="total" selected>Общее</option>
+            </select>
+        </div>
+        
+        <div class="input-group"><label for="resIz">Rиз (Мом)</label><input type="text" id="resIz" placeholder="..." maxlength="100"></div>
+        <div class="input-group"><label for="coefK">Коэф. K</label><input type="text" id="coefK" placeholder="..." maxlength="100"></div>
+    </div>
+
+    <div class="text-fields-row">
+        <div class="input-group"><label for="statusBefore">Состояние до ремонта (п.1)</label><input type="text" id="statusBefore" value="замечаний нет" maxlength="500"></div>
+        <div class="input-group"><label for="workExtra">Доп. работы (п.3)</label><input type="text" id="workExtra" value="нет" maxlength="500"></div>
+        <div class="input-group"><label for="devRec">Рекомендации (п.5)</label><input type="text" id="devRec" value="нет" maxlength="500"></div>
+    </div>
+
+    <div id="fieldsContainer"></div>
+    <button class="btn-main" id="generateBtn">Сформировать график и отчет</button>
+</div>
+
+<div id="tableResult" class="tables-container"></div>
+<div id="z7Result" class="tables-container"></div>
+
+<div class="history-section" id="historyBlock">
+    <div class="history-controls">
+        <h3>История расчетов (Сессия)</h3>
+        <div class="history-actions">
+            <button class="btn-sm" id="clearHistoryBtn">Очистить историю</button>
+            <div class="export-wrapper">
+                <button class="btn-sm" id="exportExcelBtn">Скачать историю (.xls)</button>
+                <span class="excel-note">⚠️ Файл откроется с предупреждением в Excel (это безопасно)</span>
+            </div>
+        </div>
+    </div>
+    <div id="historyList"></div>
+</div>
+
+<script src="main.js"></script>
+</body>
+</html>

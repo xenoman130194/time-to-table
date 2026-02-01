@@ -1,0 +1,22 @@
+[package]
+name = "time-sap"
+version = "0.6.2"
+description = "Калькулятор для ленивых - расчёт времени операций"
+authors = ["Галимзянов Г.Р."]
+edition = "2021"
+
+[lib]
+name = "time_sap_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "5"
