@@ -23,6 +23,7 @@ body {
 }
 
 /* Кнопки - цветовые модификаторы через ID */
+#aboutBtn { background: #3b82f6; }
 #clearBtn { background: #6b7280; }
 #importBtn { background: #f59e0b; }
 #exportBtn { background: #8b5cf6; }
@@ -442,6 +443,76 @@ tr:nth-child(even) {
     display: inline-block; 
 }
 
+/* === Модальное окно "О программе" === */
+.modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+}
+
+.modal-overlay.active {
+    display: flex;
+}
+
+.modal-content {
+    background: white;
+    border-radius: 12px;
+    max-width: 800px;
+    width: 90%;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 25px;
+    border-bottom: 1px solid #e5e7eb;
+    background: #f9fafb;
+    border-radius: 12px 12px 0 0;
+}
+
+.modal-header h2 {
+    margin: 0;
+    color: #1f2937;
+    font-size: 1.25rem;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 28px;
+    cursor: pointer;
+    color: #6b7280;
+    line-height: 1;
+    padding: 0 5px;
+    transition: color 0.2s;
+}
+
+.modal-close:hover {
+    color: #ef4444;
+}
+
+.modal-body {
+    padding: 25px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #374151;
+}
+
 @media print {
     body { background: white; padding: 0; }
     .card, .btn-main, .setup-grid, .text-fields-row, .btn-group-row, .history-controls, .btn-del-history { display: none; }
@@ -452,5 +523,6 @@ tr:nth-child(even) {
     th { background: #ddd !important; color: black !important; border: 1px solid #000; }
     td { border: 1px solid #000; }
     .z7-line-item { margin-bottom: 4px; }
-    .history-section { display: none; } 
+    .history-section { display: none; }
+    .modal-overlay { display: none !important; }
 }
