@@ -1,9 +1,5 @@
-/*
-Copyright (C) 2026  Галимзянов Г.Р.
-
-This file is part of time-to-table
-SPDX-License-Identifier: GPL-3.0-or-later
-*/
+// This file is part of time-to-table //
+// SPDX-License-Identifier: GPL-3.0-or-later //
 
 "use strict";
 
@@ -268,6 +264,21 @@ startDateInput.value = `${yyyy}-${mm}-${dd}`;
 const startTimeInput = document.getElementById('startTime');
 const container = document.getElementById('fieldsContainer');
 
+// Синхронизация единиц времени: все операции используют единицу первой операции
+function syncTimeUnits() {
+    const firstUnitSelect = container.querySelector('.op-block:first-child .op-unit');
+    if (!firstUnitSelect) return;
+    
+    const selectedUnit = firstUnitSelect.value;
+    const allUnitSelects = container.querySelectorAll('.op-block .op-unit');
+    
+    allUnitSelects.forEach((select, idx) => {
+        if (idx > 0) { // Пропускаем первую операцию
+            select.value = selectedUnit;
+        }
+    });
+}
+
 function createEl(tag, props = {}, text = '') {
     const el = document.createElement(tag);
     for (const [key, value] of Object.entries(props)) {
@@ -526,6 +537,19 @@ function createOperationBlock(index) {
         new Option('мин', 'min'),
         new Option('час', 'hour')
     );
+    
+    // Для всех операций кроме первой - disabled и синхронизация с первой
+    if (index !== 1) {
+        workUnit.disabled = true;
+        // Синхронизируем с первой операцией
+        const firstUnitSelect = container.querySelector('.op-block:first-child .op-unit');
+        if (firstUnitSelect) {
+            workUnit.value = firstUnitSelect.value;
+        }
+    } else {
+        // Для первой операции - обработчик синхронизации
+        workUnit.addEventListener('change', syncTimeUnits);
+    }
     workGroup.append(workUnit);
     
     // Блок паузы между заказами (только для первой операции)
@@ -1399,11 +1423,20 @@ function setCardData(steps) {
     renderFields();
 
     const blocks = document.querySelectorAll('.op-block');
+    
+    // Сначала устанавливаем единицу для первой операции
+    if (steps[0] && blocks[0]) {
+        blocks[0].querySelector('.op-unit').value = steps[0].unit;
+    }
+    
     steps.forEach((s, i) => {
         if (!blocks[i]) return;
         blocks[i].querySelector('.op-header-input').value = sanitizeInput(s.name, 200);
         blocks[i].querySelector('.op-duration').value = Math.max(0, Number.parseFloat(s.dur) || 0);
-        blocks[i].querySelector('.op-unit').value = s.unit;
+        // Для всех операций кроме первой единица будет синхронизирована
+        if (i === 0) {
+            blocks[i].querySelector('.op-unit').value = s.unit;
+        }
 
         if (s.hasBreak) {
             const chk = blocks[i].querySelector('.order-pause-toggle');
@@ -1413,6 +1446,9 @@ function setCardData(steps) {
             blocks[i].querySelector('.op-break-unit').value = s.breakUnit || 'min';
         }
     });
+    
+    // Синхронизируем единицы времени всех операций с первой
+    syncTimeUnits();
 }
 
 function loadTechCards() {

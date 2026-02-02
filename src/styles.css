@@ -1,9 +1,5 @@
-/*
-Copyright (C) 2026  Галимзянов Г.Р.
-
-This file is part of time-to-table
-SPDX-License-Identifier: GPL-3.0-or-later
-*/
+/* This file is part of time-to-table */
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 
 body { 
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
@@ -233,6 +229,13 @@ input:focus, select:focus {
 
 .op-duration, .op-break-val { 
     width: 100px !important; 
+}
+
+/* Disabled селект единиц времени */
+.op-unit:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    color: #6b7280;
 }
 
 .tables-container { 
