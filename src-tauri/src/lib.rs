@@ -1,3 +1,8 @@
+// Copyright (C) 2026  Галимзянов Г.Р.
+//
+// This file is part of time-to-table
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
 
