@@ -73,7 +73,13 @@
         </div>
 
         <div class="input-group"><label for="totalOps">Кол-во операций</label><input type="number" id="totalOps" min="1" max="50" value="1"></div>
-        <div class="input-group"><label for="workerCount">Исполнителей</label><input type="number" id="workerCount" min="1" max="20" value="1"></div>
+        <div class="input-group">
+            <label for="workerCount">Исполнителей</label>
+            <div class="worker-split-row">
+                <input type="number" id="workerCount" min="1" max="20" value="1">
+                <button class="btn-sm" id="setWorkersBtn">ЗАДАТЬ</button>
+            </div>
+        </div>
         
         <div class="input-group">
             <label for="timeMode">Тип задания времени</label>
@@ -112,6 +118,24 @@
         </div>
     </div>
     <div id="historyList"></div>
+</div>
+
+<!-- Модальное окно задания номеров исполнителей -->
+<div id="workersModal" class="modal-overlay">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Номера исполнителей</h2>
+            <button class="modal-close" id="closeWorkersModal">&times;</button>
+        </div>
+        <div class="modal-body" id="workersModalBody">
+            <p class="workers-hint">Введите 8-значный номер для каждого исполнителя.<br>Оставьте пустым для использования порядкового номера.</p>
+            <div id="workersInputList"></div>
+            <div class="workers-actions">
+                <button class="btn-sm" id="saveWorkersBtn" style="background:#10b981;">Сохранить</button>
+                <button class="btn-sm" id="resetWorkersBtn" style="background:#6b7280;">Сбросить</button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- Модальное окно "О программе" -->

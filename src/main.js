@@ -367,7 +367,16 @@ function restoreHistoryFromStorage() {
                 const table = createEl('table', { style: 'width:100%; border:1px solid #ccc;' });
                 const thead = createEl('thead');
                 const trHead = createEl('tr', { style: 'background:#eee;' });
-                ['№', 'Операция', 'Исполнитель', 'Обед?', 'Перерыв', 'Длительность', 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
+                
+                // Определяем единицу измерения для заголовка
+                let restoreHeaderUnit = "";
+                const restoreUniqueUnits = [...new Set(data.rows.map(r => r.unit || 'min'))];
+                if (restoreUniqueUnits.length === 1) {
+                    if (restoreUniqueUnits[0] === 'min') restoreHeaderUnit = " (мин)";
+                    else if (restoreUniqueUnits[0] === 'hour') restoreHeaderUnit = " (час)";
+                }
+                
+                ['№', 'Операция', 'Исполнитель', 'Обед?', 'Перерыв', `Длительность${restoreHeaderUnit}`, 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
                     trHead.append(createEl('th', {}, text));
                 });
                 thead.append(trHead);
@@ -762,7 +771,8 @@ async function generateTable() {
             dataMain.push({
                 opIdx: opIndex + 1,
                 name: name,
-                worker: w,
+                worker: getWorkerLabel(w),
+                workerIndex: w, // сохраняем числовой индекс для Excel формул
                 durVal: displayDurVal,
                 durText: displayDurText,
                 startObj: new Date(opStart),
@@ -809,7 +819,16 @@ async function generateTable() {
     };
 
     const tblOps = createSubTable(['№', 'Операция', 'Исполнитель', 'Обед?', 'Перерыв'], 2);
-    const tblDur = createSubTable(['Длительность'], 1);
+    
+    // Определяем единицу измерения для заголовка Длительность
+    let headerUnit = "";
+    const uniqueUnits = [...new Set(dataMain.map(r => r.unit || 'min'))];
+    if (uniqueUnits.length === 1) {
+        if (uniqueUnits[0] === 'min') headerUnit = " (мин)";
+        else if (uniqueUnits[0] === 'hour') headerUnit = " (час)";
+    }
+    
+    const tblDur = createSubTable([`Длительность${headerUnit}`], 1);
     const tblTime = createSubTable(['Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'], 3);
 
     dataMain.forEach((row) => {
@@ -919,7 +938,16 @@ async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isCh
         const table = createEl('table', { style: 'width:100%; border:1px solid #ccc;' });
         const thead = createEl('thead');
         const trHead = createEl('tr', { style: 'background:#eee;' });
-        ['№', 'Операция', 'Исполнитель', 'Обед?', 'Перерыв', 'Длительность', 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
+        
+        // Определяем единицу измерения для заголовка
+        let histHeaderUnit = "";
+        const histUniqueUnits = [...new Set(data.map(r => r.unit || 'min'))];
+        if (histUniqueUnits.length === 1) {
+            if (histUniqueUnits[0] === 'min') histHeaderUnit = " (мин)";
+            else if (histUniqueUnits[0] === 'hour') histHeaderUnit = " (час)";
+        }
+        
+        ['№', 'Операция', 'Исполнитель', 'Обед?', 'Перерыв', `Длительность${histHeaderUnit}`, 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
             trHead.append(createEl('th', {}, text));
         });
         thead.append(trHead);
@@ -1115,7 +1143,7 @@ async function exportToExcel() {
             // Op > 1: Защищена, пустая.
             let pauseCell;
             if (r.opIdx === 1) {
-                if (r.worker === 1) {
+                if (r.workerIndex === 1) {
                     pauseCell = `<Cell ss:StyleID="sTimeEditable"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 } else {
                     pauseCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
@@ -1186,7 +1214,7 @@ async function exportToExcel() {
             <Row>
                 <Cell ss:Index="2" ss:StyleID="sBorderLocked"><Data ss:Type="Number">${r.opIdx}</Data></Cell>
                 <Cell ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(r.name))}</Data></Cell>
-                <Cell ss:StyleID="sBorderLocked"><Data ss:Type="Number">${r.worker}</Data></Cell>
+                <Cell ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(String(r.worker)))}</Data></Cell>
                 <Cell ss:StyleID="sIconLocked" ss:Formula="${escapeXml(formulaIcon)}"><Data ss:Type="String">${r.crossedLunch ? '🍽️' : ''}</Data></Cell>
                 ${pauseCell}
                 ${durCell}
@@ -1705,5 +1733,96 @@ document.addEventListener('keydown', (e) => {
         if (modal && modal.classList.contains('active')) {
             modal.classList.remove('active');
         }
+        const workersModal = document.getElementById('workersModal');
+        if (workersModal && workersModal.classList.contains('active')) {
+            workersModal.classList.remove('active');
+        }
+    }
+});
+
+// === МОДАЛЬНОЕ ОКНО НОМЕРОВ ИСПОЛНИТЕЛЕЙ ===
+let workerIds = []; // Массив 8-значных номеров исполнителей
+
+function getWorkerLabel(index) {
+    // index начинается с 1
+    if (workerIds[index - 1] && workerIds[index - 1].trim()) {
+        return workerIds[index - 1].trim();
+    }
+    return String(index); // По умолчанию порядковый номер
+}
+
+function renderWorkersInputList() {
+    const container = document.getElementById('workersInputList');
+    const count = parseInt(document.getElementById('workerCount').value) || 1;
+    container.innerHTML = '';
+    
+    for (let i = 1; i <= count; i++) {
+        const row = createEl('div', { className: 'worker-input-row' });
+        const label = createEl('label', {}, `Исполнитель ${i}:`);
+        const input = createEl('input', {
+            type: 'text',
+            maxLength: '8',
+            placeholder: '00000000',
+            pattern: '[0-9]{8}'
+        });
+        input.value = workerIds[i - 1] || '';
+        input.dataset.workerIndex = i - 1;
+        
+        // Разрешаем только цифры
+        input.addEventListener('input', (e) => {
+            e.target.value = e.target.value.replace(/[^0-9]/g, '').substring(0, 8);
+        });
+        
+        row.append(label, input);
+        container.append(row);
+    }
+}
+
+function saveWorkerIds() {
+    const inputs = document.querySelectorAll('#workersInputList input');
+    workerIds = [];
+    inputs.forEach((input, idx) => {
+        const val = input.value.trim();
+        // Если номер введён, проверяем что он 8-значный
+        if (val && val.length === 8) {
+            workerIds[idx] = val;
+        } else if (val && val.length > 0 && val.length < 8) {
+            // Дополняем нулями слева до 8 цифр
+            workerIds[idx] = val.padStart(8, '0');
+        } else {
+            workerIds[idx] = '';
+        }
+    });
+    document.getElementById('workersModal').classList.remove('active');
+}
+
+function resetWorkerIds() {
+    workerIds = [];
+    renderWorkersInputList();
+}
+
+document.getElementById('setWorkersBtn').addEventListener('click', () => {
+    renderWorkersInputList();
+    document.getElementById('workersModal').classList.add('active');
+});
+
+document.getElementById('closeWorkersModal').addEventListener('click', () => {
+    document.getElementById('workersModal').classList.remove('active');
+});
+
+document.getElementById('workersModal').addEventListener('click', (e) => {
+    if (e.target.id === 'workersModal') {
+        document.getElementById('workersModal').classList.remove('active');
+    }
+});
+
+document.getElementById('saveWorkersBtn').addEventListener('click', saveWorkerIds);
+document.getElementById('resetWorkersBtn').addEventListener('click', resetWorkerIds);
+
+// При изменении количества исполнителей обновляем модальное окно (если открыто)
+document.getElementById('workerCount').addEventListener('change', () => {
+    const modal = document.getElementById('workersModal');
+    if (modal && modal.classList.contains('active')) {
+        renderWorkersInputList();
     }
 });

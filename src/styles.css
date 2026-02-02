@@ -238,6 +238,83 @@ input:focus, select:focus {
     color: #6b7280;
 }
 
+/* Поле исполнителей - разделение на число и кнопку */
+.worker-split-row {
+    display: flex;
+    gap: 5px;
+}
+
+.worker-split-row input {
+    flex: 1;
+    min-width: 0;
+}
+
+.worker-split-row .btn-sm {
+    flex: 1;
+    white-space: nowrap;
+    background: #3b82f6;
+}
+
+/* Модальное окно номеров исполнителей */
+#setWorkersBtn { background: #3b82f6; }
+
+.workers-hint {
+    margin: 0 0 15px 0;
+    color: #6b7280;
+    font-size: 13px;
+}
+
+.worker-input-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.worker-input-row label {
+    min-width: 120px;
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.worker-input-row input {
+    flex: 1;
+    max-width: 200px;
+    font-family: 'Consolas', 'Courier New', monospace;
+    letter-spacing: 2px;
+    text-align: center;
+}
+
+.workers-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid #e5e7eb;
+}
+
+.workers-actions .btn-sm {
+    padding: 10px 20px;
+    font-size: 14px;
+}
+
+#saveWorkersBtn {
+    background: #10b981 !important;
+}
+
+#saveWorkersBtn:hover {
+    background: #059669 !important;
+}
+
+#resetWorkersBtn {
+    background: #ef4444 !important;
+}
+
+#resetWorkersBtn:hover {
+    background: #dc2626 !important;
+}
+
 .tables-container { 
     display: flex; 
     width: 100%; 
