@@ -1617,3 +1617,50 @@ renderFields();
 setupExcelExport();
 restoreHistoryFromStorage();
 updateFirstPauseVisibility();
+
+// === МОДАЛЬНОЕ ОКНО "О ПРОГРАММЕ" ===
+let aboutTextCache = null;
+
+async function loadAboutText() {
+    if (aboutTextCache) return aboutTextCache;
+    try {
+        const response = await fetch('about.txt');
+        if (!response.ok) throw new Error('Failed to load about.txt');
+        aboutTextCache = await response.text();
+        return aboutTextCache;
+    } catch (e) {
+        console.error('Error loading about text:', e);
+        return 'Ошибка загрузки информации о программе.';
+    }
+}
+
+document.getElementById('aboutBtn').addEventListener('click', async () => {
+    const modal = document.getElementById('aboutModal');
+    const modalBody = document.getElementById('aboutModalBody');
+    
+    modalBody.textContent = 'Загрузка...';
+    modal.classList.add('active');
+    
+    const text = await loadAboutText();
+    modalBody.textContent = text;
+});
+
+document.getElementById('closeAboutModal').addEventListener('click', () => {
+    document.getElementById('aboutModal').classList.remove('active');
+});
+
+document.getElementById('aboutModal').addEventListener('click', (e) => {
+    if (e.target.id === 'aboutModal') {
+        document.getElementById('aboutModal').classList.remove('active');
+    }
+});
+
+// Закрытие по Escape
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        const modal = document.getElementById('aboutModal');
+        if (modal && modal.classList.contains('active')) {
+            modal.classList.remove('active');
+        }
+    }
+});

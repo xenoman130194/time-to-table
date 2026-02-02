@@ -21,6 +21,7 @@
             <span>v0.6.3 by Галимзянов Г.Р.</span>
         </h2>
         <div class="btn-group-row">
+            <button class="btn-sm" id="aboutBtn">О Программе</button>
             <button class="btn-sm" id="clearBtn">Очистить</button>
             <button class="btn-sm" id="importBtn">Импорт (JSON)</button>
             <button class="btn-sm" id="exportBtn">Экспорт (JSON)</button>
@@ -108,6 +109,19 @@
         </div>
     </div>
     <div id="historyList"></div>
+</div>
+
+<!-- Модальное окно "О программе" -->
+<div id="aboutModal" class="modal-overlay">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>О программе</h2>
+            <button class="modal-close" id="closeAboutModal">&times;</button>
+        </div>
+        <div class="modal-body" id="aboutModalBody">
+            <p>Загрузка...</p>
+        </div>
+    </div>
 </div>
 
 <script src="main.js"></script>
