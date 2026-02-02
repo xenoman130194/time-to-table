@@ -1,9 +1,9 @@
 {
   "name": "time-to-table",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "description": "Калькулятор для ленивых - расчёт времени операций",
   "author": "Галимзянов Г.Р.",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",
