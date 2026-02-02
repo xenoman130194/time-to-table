@@ -490,7 +490,7 @@ function renderFields() {
     document.getElementById('totalOps').value = targetCount;
     
     // Валидация отрицательных значений для #workerCount
-    let workerCount = Number.parseInt(document.getElementById('workerCount').value);
+    let workerCount = Number.parseInt(document.getElementById('workerCount').value, 10);
     if (workerCount < 1) {
         document.getElementById('workerCount').value = 1;
     }
@@ -513,22 +513,27 @@ function createOperationBlock(index) {
     const block = createEl('div', { className: 'op-block' });
     const nameInp = createEl('input', {
         className: 'op-header-input',
+        name: `op_name_${index}`,
         value: `Операция №${index}`,
         type: 'text',
-        placeholder: 'Название операции'
+        placeholder: 'Название операции',
+        autocomplete: 'off'
     });
     
     const controls = createEl('div', { className: 'op-controls' });
     
     // Блок времени работы
     const workGroup = createEl('div', { className: 'time-group' });
-    workGroup.append(createEl('label', {}, 'Время:'));
+    workGroup.append(createEl('label', { htmlFor: `op_duration_${index}` }, 'Время:'));
     const workInput = createEl('input', {
         type: 'number',
         className: 'op-duration',
+        id: `op_duration_${index}`,
+        name: `op_duration_${index}`,
         step: '1',
         min: '0',
-        value: '10'
+        value: '10',
+        autocomplete: 'off'
     });
     // Валидация отрицательных значений для op-duration
     workInput.addEventListener('change', (e) => {
@@ -540,6 +545,7 @@ function createOperationBlock(index) {
     workGroup.append(workInput);
     const workUnit = createEl('select', {
         className: 'op-unit',
+        name: `op_unit_${index}`,
         style: 'width:70px; background:transparent; border:none;'
     });
     workUnit.append(
@@ -563,13 +569,16 @@ function createOperationBlock(index) {
     
     // Блок паузы между заказами (только для первой операции)
     const breakGroup = createEl('div', { className: 'time-group break-container' });
-    breakGroup.append(createEl('label', {}, 'Пауза:'));
+    breakGroup.append(createEl('label', { htmlFor: `op_break_${index}` }, 'Пауза:'));
     const breakInput = createEl('input', {
         type: 'number',
         className: 'op-break-val',
+        id: `op_break_${index}`,
+        name: `op_break_${index}`,
         value: '0',
         step: '1',
-        min: '0'
+        min: '0',
+        autocomplete: 'off'
     });
     // Валидация отрицательных значений для op-break-val
     breakInput.addEventListener('change', (e) => {
@@ -581,6 +590,7 @@ function createOperationBlock(index) {
     breakGroup.append(breakInput);
     const breakUnit = createEl('select', {
         className: 'op-break-unit',
+        name: `op_break_unit_${index}`,
         style: 'width:70px; background:transparent; border:none;'
     });
     breakUnit.append(
@@ -594,9 +604,11 @@ function createOperationBlock(index) {
     const chk = createEl('input', {
         type: 'checkbox',
         className: 'order-pause-toggle',
+        id: `op_pause_${index}`,
+        name: `op_pause_${index}`,
         style: 'margin:0;'
     });
-    toggleDiv.append(chk, createEl('label', { style: 'margin-left:4px; cursor:pointer;' }, 'Пауза перед началом (перерыв)'));
+    toggleDiv.append(chk, createEl('label', { htmlFor: `op_pause_${index}`, style: 'margin-left:4px; cursor:pointer;' }, 'Пауза перед началом (перерыв)'));
     
     // Скрыть паузу для всех блоков кроме первого
     if (index !== 1) {
@@ -1753,24 +1765,28 @@ function getWorkerLabel(index) {
 
 function renderWorkersInputList() {
     const container = document.getElementById('workersInputList');
-    const count = parseInt(document.getElementById('workerCount').value) || 1;
+    const count = Number.parseInt(document.getElementById('workerCount').value, 10) || 1;
     container.innerHTML = '';
     
     for (let i = 1; i <= count; i++) {
         const row = createEl('div', { className: 'worker-input-row' });
-        const label = createEl('label', {}, `Исполнитель ${i}:`);
+        const label = createEl('label', { htmlFor: `worker_id_${i}` }, `Исполнитель ${i}:`);
         const input = createEl('input', {
             type: 'text',
+            id: `worker_id_${i}`,
+            name: `worker_id_${i}`,
             maxLength: '8',
             placeholder: '00000000',
-            pattern: '[0-9]{8}'
+            pattern: '[0-9]{8}',
+            autocomplete: 'off'
         });
         input.value = workerIds[i - 1] || '';
         input.dataset.workerIndex = i - 1;
         
         // Разрешаем только цифры
         input.addEventListener('input', (e) => {
-            e.target.value = e.target.value.replace(/[^0-9]/g, '').substring(0, 8);
+            // заменить все не-цифры (используем replaceAll с глобальным regex)
+            e.target.value = e.target.value.replaceAll(/[^0-9]/g, '').substring(0, 8);
         });
         
         row.append(label, input);
