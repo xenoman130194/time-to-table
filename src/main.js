@@ -264,6 +264,64 @@ startDateInput.value = `${yyyy}-${mm}-${dd}`;
 const startTimeInput = document.getElementById('startTime');
 const container = document.getElementById('fieldsContainer');
 
+// Ограничение ввода в поле 'Заказ' — только цифры
+try {
+    const orderInputEl = document.getElementById('orderName');
+    if (orderInputEl) {
+        orderInputEl.addEventListener('input', (e) => {
+            // Оставляем только цифры
+            e.target.value = e.target.value.replaceAll(/[^0-9]/g, '');
+        });
+        orderInputEl.setAttribute('inputmode', 'numeric');
+        orderInputEl.setAttribute('autocomplete', 'off');
+    }
+} catch (e) {
+    console.debug?.('Order input listener attach failed:', e?.message);
+}
+
+// Ограничение ввода в поле 'Rиз' — только цифры
+try {
+    const rizInputEl = document.getElementById('resIz');
+    if (rizInputEl) {
+        rizInputEl.addEventListener('input', (e) => {
+            e.target.value = e.target.value.replaceAll(/[^0-9]/g, '');
+        });
+        rizInputEl.setAttribute('inputmode', 'numeric');
+        rizInputEl.setAttribute('autocomplete', 'off');
+    }
+} catch (e) {
+    console.debug?.('Riz input listener attach failed:', e?.message);
+}
+
+// Ограничение ввода в поле 'Коэф. K' — числа с максимум 2 десятичными знаками
+try {
+    const kInputEl = document.getElementById('coefK');
+    if (kInputEl) {
+        kInputEl.addEventListener('input', (e) => {
+            let v = String(e.target.value || '');
+            // Разрешаем цифры, точку и запятую. Удаляем остальные символы.
+            v = v.replaceAll(/[^0-9.,]/g, '');
+            // Оставляем только первый разделитель (точку или запятую) и максимум 2 знака дробной части
+            const sepMatch = v.match(/[.,]/);
+            if (sepMatch) {
+                const sep = sepMatch[0];
+                const idx = v.indexOf(sep);
+                const intPart = v.slice(0, idx).replaceAll(/[.,]/g, '');
+                const dec = v.slice(idx + 1).replaceAll(/[.,]/g, '').slice(0, 2);
+                v = intPart + sep + dec;
+            } else {
+                // Нет разделителя — просто удалить все разделители
+                v = v.replaceAll(/[.,]/g, '');
+            }
+            e.target.value = v;
+        });
+        kInputEl.setAttribute('inputmode', 'decimal');
+        kInputEl.setAttribute('autocomplete', 'off');
+    }
+} catch (e) {
+    console.debug?.('CoefK input listener attach failed:', e?.message);
+}
+
 // Синхронизация единиц времени: все операции используют единицу первой операции
 function syncTimeUnits() {
     const firstUnitSelect = container.querySelector('.op-block:first-child .op-unit');
@@ -875,6 +933,7 @@ async function generateTable() {
     const devRec = sanitizeInput(document.getElementById('devRec').value, 300) || "нет";
     const rizVal = sanitizeInput(document.getElementById('resIz').value, 100) || "";
     const kVal = sanitizeInput(document.getElementById('coefK').value, 100) || "";
+        const kValForZ7 = kVal.replace(',', '.');
     const worksText = operationNames.join(', ');
     const rizDisplay = rizVal ? `${rizVal} МОм` : "";
 
@@ -882,7 +941,7 @@ async function generateTable() {
         `1. состояние объекта ремонта до начала работ: ${statusText}`,
         `2. выполненные работы в рамках планового объёма работ: ${worksText}`,
         `3. выполненные работы в рамках дополнительного объёма работ: ${extraWorks}`,
-        `4. результаты испытаний, тестов, замеров, инспекций: Rиз= ${rizDisplay} K= ${kVal}.`,
+            `4. результаты испытаний, тестов, замеров, инспекций: Rиз= ${rizDisplay} K= ${kValForZ7}`,
         `5. отклонения от ТК и рекомендации по корректировке ТК: ${devRec}`
     ];
     
@@ -905,7 +964,10 @@ async function generateTable() {
     z7Result.append(z7Div);
 
     const select = document.getElementById('techCardSelect');
-    const cardName = select.value === 'manual' ? 'Ручной ввод' : select.options[select.selectedIndex].text;
+    const cardNameBase = select.value === 'manual' ? 'Ручной ввод' : select.options[select.selectedIndex].text;
+    const orderInput = sanitizeInput(document.getElementById('orderName')?.value || '', 200);
+    const nameInput = sanitizeInput(document.getElementById('itemName')?.value || '', 200);
+    const cardName = (orderInput ? (orderInput + ' ') : '') + (nameInput ? nameInput : cardNameBase);
     
     const lunchConfig = { h: lh, m: lm, h2: lh2, m2: lm2, dur: lunchDurMin };
     

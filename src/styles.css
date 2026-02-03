@@ -208,10 +208,12 @@ input:focus, select:focus {
 .op-header-input { 
     border: 1px solid transparent; 
     font-weight: 600; 
-    width: 550px; 
+    width: 100%;
+    max-width: 550px; 
     padding: 6px; 
     background: transparent; 
     transition: 0.2s; 
+    box-sizing: border-box;
 }
 
 .op-header-input:focus { 
