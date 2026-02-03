@@ -276,13 +276,18 @@ input:focus, select:focus {
     background: #3b82f6;
 }
 
-/* Модальное окно номеров исполнителей */
-#setWorkersBtn { background: #3b82f6; }
+/* Модальное окно номеров исполнителей и операций */
+#setWorkersBtn,
+#setOpsBtn { background: #3b82f6; }
+
+.modal-content-wide {
+    max-width: 600px;
+}
 
 .workers-hint {
-    margin: 0 0 15px 0;
+    margin: 0 0 10px 0;
     color: #6b7280;
-    font-size: 13px;
+    font-size: 12px;
 }
 
 .worker-input-row {
@@ -315,25 +320,143 @@ input:focus, select:focus {
     border-top: 1px solid #e5e7eb;
 }
 
+/* Workers modal layout (avoid inline styles for CSP) */
+.workers-modal-flex {
+    display: flex;
+    gap: 18px;
+    align-items: flex-start;
+}
+.workers-modal-left {
+    flex: 1;
+    min-width: 260px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    padding-top: 0;
+    margin-top: -5px;
+}
+.workers-modal-right {
+    flex: 1;
+    min-width: 260px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    padding-top: 0;
+    margin-top: 0px;
+}
+.workers-cheat-container { border-left: 1px solid #eee; padding-left: 18px; }
+.workers-cheat-title { margin-top: 0; font-size: 16px; }
+.workers-cheat-sub { font-size: 12px; color: #666; margin: 0 0 10px 0; }
+.workers-cheat-container { border-left: 1px solid #eee; padding-left: 18px; display:flex; flex-direction:column; justify-content:flex-start; }
+.workers-modal-left { display:flex; flex-direction:column; justify-content:flex-start; padding-top:6px; }
+.workers-cheat-textarea { margin-top: 0; }
+.workers-cheat-textarea { width: 100%; height: 260px; resize: vertical; padding: 10px; box-sizing: border-box; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
+.workers-actions--compact { margin-top: 12px; display:flex; justify-content:space-between; align-items:center; }
+.workers-actions-left { display:flex; gap:10px; align-items:center; }
+.workers-actions-right { display:flex; gap:10px; align-items:center; }
+.btn-secondary { background: #f59e0b; }
+.btn-secondary:hover { opacity: 0.95; }
+.btn-edit { background: #3b82f6; }
+.btn-edit:hover { opacity: 0.95; }
+
+/* Disabled cheat textarea appearance */
+.workers-cheat-textarea[disabled] { background: #f3f4f6; color: #6b7280; }
+
 .workers-actions .btn-sm {
     padding: 10px 20px;
     font-size: 14px;
 }
 
-#saveWorkersBtn {
-    background: #10b981 !important;
-}
-
-#saveWorkersBtn:hover {
-    background: #059669 !important;
-}
-
-#resetWorkersBtn {
+#resetWorkersBtn,
+#resetOpsBtn {
     background: #ef4444 !important;
 }
 
-#resetWorkersBtn:hover {
+#resetWorkersBtn:hover,
+#resetOpsBtn:hover {
     background: #dc2626 !important;
+}
+
+#saveWorkersBtn,
+#saveOpsBtn {
+    background: #10b981 !important;
+}
+
+#saveWorkersBtn:hover,
+#saveOpsBtn:hover {
+    background: #059669 !important;
+}
+
+/* Стили для строки операции с галочкой */
+.op-input-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    background: #f9fafb;
+    border-radius: 6px;
+}
+
+.op-input-row:first-child {
+    background: #e0f2fe;
+}
+
+.op-input-row label.op-label {
+    min-width: 100px;
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+/* Number label displayed before operation name */
+.op-num-label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 90px;
+    padding: 10px 12px;
+    margin-right: 10px;
+    background: #f1f5f9;
+    border-radius: 6px;
+    font-family: 'Consolas', 'Courier New', monospace;
+    color: #374151;
+    letter-spacing: 1px;
+}
+
+.op-input-row input[type="text"] {
+    width: 120px;
+    font-family: 'Consolas', 'Courier New', monospace;
+    letter-spacing: 2px;
+    text-align: center;
+}
+
+.op-input-row input[type="text"]:disabled {
+    background: #e5e7eb;
+    color: #6b7280;
+    cursor: not-allowed;
+}
+
+.op-checkbox-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: auto;
+}
+
+.op-checkbox-wrapper label {
+    font-size: 12px;
+    color: #6b7280;
+    margin: 0;
+    cursor: pointer;
+}
+
+.op-checkbox-wrapper input[type="checkbox"] {
+    cursor: pointer;
+}
+
+.op-checkbox-wrapper.hidden {
+    visibility: hidden;
 }
 
 .tables-container { 

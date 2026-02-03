@@ -263,6 +263,9 @@ startDateInput.value = `${yyyy}-${mm}-${dd}`;
 
 const startTimeInput = document.getElementById('startTime');
 const container = document.getElementById('fieldsContainer');
+// State for operations modal (moved early to avoid TDZ when functions run)
+let operationFirstId = ''; // Первый 8-значный номер подтверждения
+let lastOperationIndex = null; // Индекс операции, которая будет "последней"
 
 // Ограничение ввода в поле 'Заказ' — только цифры
 try {
@@ -434,7 +437,7 @@ function restoreHistoryFromStorage() {
                     else if (restoreUniqueUnits[0] === 'hour') restoreHeaderUnit = " (час)";
                 }
                 
-                ['№', 'Операция', 'Исполнитель', 'Обед?', 'Перерыв', `Длительность${restoreHeaderUnit}`, 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
+                ['№ ПДТВ', 'Операция', 'Исполнитель', 'Обед?', 'Перерыв', `Длительность${restoreHeaderUnit}`, 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
                     trHead.append(createEl('th', {}, text));
                 });
                 thead.append(trHead);
@@ -544,7 +547,7 @@ function updateFirstPauseVisibility() {
 }
 
 function renderFields() {
-    const targetCount = validateNumber(document.getElementById('totalOps').value, 1, 50);
+    const targetCount = validateNumber(document.getElementById('totalOps').value, 1, 20);
     document.getElementById('totalOps').value = targetCount;
     
     // Валидация отрицательных значений для #workerCount
@@ -569,6 +572,11 @@ function renderFields() {
 
 function createOperationBlock(index) {
     const block = createEl('div', { className: 'op-block' });
+    // Operation number label (shows confirmation number if set, otherwise sequential index)
+    const totalOpsCurrent = Number.parseInt(document.getElementById('totalOps')?.value || '0', 10) || 0;
+    const opNumText = (typeof getOperationLabel === 'function') ? getOperationLabel(index, totalOpsCurrent) : String(index);
+    const numLabel = createEl('div', { className: 'op-num-label' }, opNumText);
+
     const nameInp = createEl('input', {
         className: 'op-header-input',
         name: `op_name_${index}`,
@@ -685,7 +693,7 @@ function createOperationBlock(index) {
     });
     
     controls.append(toggleDiv, breakGroup, workGroup);
-    block.append(nameInp, controls);
+    block.append(numLabel, nameInp, controls);
     container.append(block);
     updateBreakVis();
     
@@ -701,12 +709,16 @@ async function generateTable() {
 
     const startD = document.getElementById('startDate').value;
     const startT = document.getElementById('startTime').value;
-    const workerCount = validateNumber(document.getElementById('workerCount').value, 1, 20);
+    const workerCount = validateNumber(document.getElementById('workerCount').value, 1, 10);
     const timeMode = document.getElementById('timeMode').value;
     const lunchStartInput = document.getElementById('lunchStart').value;
     const lunchStartInput2 = document.getElementById('lunchStart2').value;
     const lunchDurMin = validateNumber(document.getElementById('lunchDur').value, 0, 480);
     const isChain = document.getElementById('chainMode').checked;
+    // Validate select values to expected enums
+    if (timeMode !== 'per_worker' && timeMode !== 'total') {
+        console.warn('Unexpected timeMode value, defaulting to "total"');
+    }
     
     if (!startD || !startT) {
         alert("Пожалуйста, укажите дату и время начала.");
@@ -733,7 +745,8 @@ async function generateTable() {
         const pauseChk = firstOpBlock.querySelector('.order-pause-toggle');
             if (pauseChk?.checked && !isFirstCalculation) {
             const pauseDur = Math.max(0, Number.parseFloat(firstOpBlock.querySelector('.op-break-val').value) || 0);
-            const pauseUnit = firstOpBlock.querySelector('.op-break-unit').value;
+            let pauseUnit = firstOpBlock.querySelector('.op-break-unit').value;
+            if (pauseUnit !== 'min' && pauseUnit !== 'hour') pauseUnit = 'min';
             
             // Если пауза выставлена (даже 0), мы её будем отображать для первой операции, 
             // если считаем, что наличие галочки = наличие паузы. 
@@ -759,12 +772,26 @@ async function generateTable() {
     // --- 
     
     // --- Настройка обедов (JS) ---
-    let [lh, lm] = lunchStartInput.split(':').map(Number);
+    // Validate lunch time format (HH:MM or HH:MM:SS)
+    const timeRe = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/;
+    let lh = 0, lm = 0;
+    try {
+        const m = String(lunchStartInput || '').match(timeRe);
+        if (m) { lh = Number(m[1]); lm = Number(m[2]); } else { throw new Error('invalid lunchStart'); }
+    } catch (e) {
+        lh = 12; lm = 0; // fallback to noon
+    }
     let lunchStartTime = new Date(y, m - 1, d, lh, lm, 0);
     let lunchEndTime = new Date(lunchStartTime.getTime() + lunchDurMin * 60000);
 
     // Второй обед
-    let [lh2, lm2] = lunchStartInput2.split(':').map(Number);
+    let lh2 = 0, lm2 = 0;
+    try {
+        const m2 = String(lunchStartInput2 || '').match(timeRe);
+        if (m2) { lh2 = Number(m2[1]); lm2 = Number(m2[2]); } else { throw new Error('invalid lunchStart2'); }
+    } catch (e) {
+        lh2 = 0; lm2 = 0; // fallback to midnight
+    }
     let lunch2StartTime = new Date(y, m - 1, d, lh2, lm2, 0);
     // Если второй обед раньше старта (напр 00:00 vs 08:00), считаем что он на след. день
     // (Это простая эвристика, "ночной обед")
@@ -789,7 +816,8 @@ async function generateTable() {
         const name = sanitizeInput(block.querySelector('.op-header-input').value, 200);
         operationNames.push(name);
         const dur = Math.max(0, Number.parseFloat(block.querySelector('.op-duration').value) || 0);
-        const unit = block.querySelector('.op-unit').value;
+        let unit = block.querySelector('.op-unit').value;
+        if (unit !== 'min' && unit !== 'hour') unit = 'min';
         
         let durationMs = 0;
         if (unit === 'hour') durationMs = dur * 3600 * 1000;
@@ -839,7 +867,8 @@ async function generateTable() {
             const rowPauseExcel = (opIndex === 0) ? pauseExcelVal : 0;
 
             dataMain.push({
-                opIdx: opIndex + 1,
+                opIdx: getOperationLabel(opIndex + 1, ops.length), // Номер подтверждения или порядковый номер
+                opNumeric: opIndex + 1, // Числовой индекс для Excel формул
                 name: name,
                 worker: getWorkerLabel(w),
                 workerIndex: w, // сохраняем числовой индекс для Excel формул
@@ -888,7 +917,7 @@ async function generateTable() {
         return { wrapper, tbody };
     };
 
-    const tblOps = createSubTable(['№', 'Операция', 'Исполнитель', 'Обед?', 'Перерыв'], 2);
+    const tblOps = createSubTable(['№ ПДТВ', 'Операция', 'Исполнитель', 'Обед?', 'Перерыв'], 2);
     
     // Определяем единицу измерения для заголовка Длительность
     let headerUnit = "";
@@ -1021,7 +1050,7 @@ async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isCh
             else if (histUniqueUnits[0] === 'hour') histHeaderUnit = " (час)";
         }
         
-        ['№', 'Операция', 'Исполнитель', 'Обед?', 'Перерыв', `Длительность${histHeaderUnit}`, 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
+        ['№ ПДТВ', 'Операция', 'Исполнитель', 'Обед?', 'Перерыв', `Длительность${histHeaderUnit}`, 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
             trHead.append(createEl('th', {}, text));
         });
         thead.append(trHead);
@@ -1179,7 +1208,7 @@ async function exportToExcel() {
             <Cell ss:Index="2" ss:MergeAcross="9" ss:StyleID="sTitle"><Data ss:Type="String">${escapeXml(excelSanitizeCell(data.title))}</Data></Cell>
         </Row>
         <Row>
-            <Cell ss:Index="2" ss:StyleID="sHeader"><Data ss:Type="String">№</Data></Cell>
+            <Cell ss:Index="2" ss:StyleID="sHeader"><Data ss:Type="String">№ ПДТВ</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Операция</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Исполнитель</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Обед?</Data></Cell>
@@ -1203,9 +1232,11 @@ async function exportToExcel() {
             
             let startTimeCell;
             let durCell;
-            const prevRowOpIdx = (idx > 0) ? data.rows[idx - 1].opIdx : -1;
+            // Используем opNumeric если есть, иначе fallback на opIdx для старых записей
+            const curOpNum = r.opNumeric ?? r.opIdx;
+            const prevRowOpNum = (idx > 0) ? (data.rows[idx - 1].opNumeric ?? data.rows[idx - 1].opIdx) : -1;
             
-            if (r.opIdx === prevRowOpIdx) {
+            if (curOpNum === prevRowOpNum) {
                 durCell = `<Cell ss:StyleID="sDurLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">${r.durVal}</Data></Cell>`;
             } else {
                 durCell = `<Cell ss:StyleID="sDurEditable"><Data ss:Type="Number">${r.durVal}</Data></Cell>`;
@@ -1216,7 +1247,7 @@ async function exportToExcel() {
             // Op 1 Worker > 1: Защищена, копия значения сверху.
             // Op > 1: Защищена, пустая.
             let pauseCell;
-            if (r.opIdx === 1) {
+            if (curOpNum === 1) {
                 if (r.workerIndex === 1) {
                     pauseCell = `<Cell ss:StyleID="sTimeEditable"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 } else {
@@ -1238,7 +1269,7 @@ async function exportToExcel() {
                     startTimeCell = `<Cell ss:StyleID="sTimeEditable"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                 }
             } else {
-                if (r.opIdx === prevRowOpIdx) {
+                if (curOpNum === prevRowOpNum) {
                     startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                 } else {
                     // Начало операции (кроме первой) ссылается на конец предыдущей. 
@@ -1286,7 +1317,7 @@ async function exportToExcel() {
 
             xmlBody += `
             <Row>
-                <Cell ss:Index="2" ss:StyleID="sBorderLocked"><Data ss:Type="Number">${r.opIdx}</Data></Cell>
+                <Cell ss:Index="2" ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(String(r.opIdx))}</Data></Cell>
                 <Cell ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(r.name))}</Data></Cell>
                 <Cell ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(String(r.worker)))}</Data></Cell>
                 <Cell ss:StyleID="sIconLocked" ss:Formula="${escapeXml(formulaIcon)}"><Data ss:Type="String">${r.crossedLunch ? '🍽️' : ''}</Data></Cell>
@@ -1424,7 +1455,7 @@ function buildExcelXml(xmlBody) {
  <Worksheet ss:Name="Sheet1" ss:Protected="1" x:Password="">
   <Table>
    <Column ss:Width="20" ss:StyleID="sTextLocked"/> <!-- Margin -->
-   <Column ss:Width="30" ss:StyleID="sTextLocked"/> <!-- № -->
+    <Column ss:Width="90" ss:StyleID="sTextLocked"/> <!-- № ( widened to fit 8-digit numbers ) -->
    <Column ss:Width="200" ss:StyleID="sTextLocked"/> <!-- Operation -->
    <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- Worker -->
    <Column ss:Width="50" ss:StyleID="sTextLocked"/> <!-- Lunch? -->
@@ -1520,7 +1551,7 @@ function setCardData(steps) {
         return;
     }
 
-    document.getElementById('totalOps').value = Math.min(steps.length, 50);
+    document.getElementById('totalOps').value = Math.min(steps.length, 20);
     container.textContent = '';
     renderFields();
 
@@ -1568,8 +1599,40 @@ document.getElementById('chainMode').addEventListener('change', () => {
     updateStartTimeFromHistory();
     updateFirstPauseVisibility();
 });
-document.getElementById('totalOps').addEventListener('change', renderFields);
-document.getElementById('totalOps').addEventListener('keyup', renderFields);
+const totalOpsEl = document.getElementById('totalOps');
+if (totalOpsEl) {
+    // While typing: keep only digits and clamp to max immediately
+    totalOpsEl.addEventListener('input', (e) => {
+        let v = String(e.target.value).replace(/[^0-9]/g, '');
+        if (v !== '') {
+            const n = Number.parseInt(v, 10);
+            if (!Number.isNaN(n)) {
+                const clamped = Math.max(1, Math.min(20, n));
+                if (clamped !== n) v = String(clamped);
+            }
+        }
+        e.target.value = v;
+    });
+
+    // Paste: sanitize and clamp
+    totalOpsEl.addEventListener('paste', (e) => {
+        e.preventDefault();
+        const text = (e.clipboardData || window.clipboardData).getData('text') || '';
+        const digits = text.replace(/[^0-9]/g, '');
+        const n = Number.parseInt(digits || '0', 10) || 0;
+        const clamped = validateNumber(n, 1, 20);
+        totalOpsEl.value = clamped;
+        renderFields();
+    });
+
+    totalOpsEl.addEventListener('change', (e) => {
+        // Clamp to allowed range and re-render
+        const val = validateNumber(e.target.value, 1, 20);
+        e.target.value = val;
+        renderFields();
+    });
+    totalOpsEl.addEventListener('keyup', renderFields);
+}
 document.getElementById('generateBtn').addEventListener('click', generateTable);
 
 document.getElementById('clearBtn').addEventListener('click', async () => {
@@ -1589,8 +1652,76 @@ document.getElementById('clearBtn').addEventListener('click', async () => {
     }
     
     if (confirmed) {
+        // Reset form fields to defaults (like F5) but keep history
+        // Compute today's date in ISO yyyy-mm-dd for default startDate
+        const _today = new Date();
+        const _yyyy = _today.getFullYear();
+        const _mm = String(_today.getMonth() + 1).padStart(2, '0');
+        const _dd = String(_today.getDate()).padStart(2, '0');
+        const _todayStr = `${_yyyy}-${_mm}-${_dd}`;
+
+        const defaults = {
+            totalOps: 1,
+            workerCount: 1,
+            startDate: _todayStr,
+            startTime: '08:00:00',
+            chainMode: true,
+            lunchStart: '12:00',
+            lunchStart2: '00:00',
+            lunchDur: 45,
+            timeMode: 'total',
+            resIz: '',
+            coefK: '',
+            orderName: '',
+            itemName: '',
+            statusBefore: 'замечаний нет',
+            workExtra: 'нет',
+            devRec: 'нет'
+        };
+
+        try {
+            document.getElementById('totalOps').value = defaults.totalOps;
+            document.getElementById('workerCount').value = defaults.workerCount;
+            document.getElementById('startDate').value = defaults.startDate;
+            document.getElementById('startTime').value = defaults.startTime;
+            document.getElementById('chainMode').checked = defaults.chainMode;
+            document.getElementById('lunchStart').value = defaults.lunchStart;
+            document.getElementById('lunchStart2').value = defaults.lunchStart2;
+            document.getElementById('lunchDur').value = defaults.lunchDur;
+            document.getElementById('timeMode').value = defaults.timeMode;
+            document.getElementById('resIz').value = defaults.resIz;
+            document.getElementById('coefK').value = defaults.coefK;
+            document.getElementById('orderName').value = defaults.orderName;
+            document.getElementById('itemName').value = defaults.itemName;
+            document.getElementById('statusBefore').value = defaults.statusBefore;
+            document.getElementById('workExtra').value = defaults.workExtra;
+            document.getElementById('devRec').value = defaults.devRec;
+        } catch (e) {
+            console.debug?.('clearBtn reset fields error:', e?.message);
+        }
+
+        // Clear generated results and dynamic fields
         container.textContent = '';
-        document.getElementById('totalOps').value = 1;
+        const tableResult = document.getElementById('tableResult');
+        const z7Result = document.getElementById('z7Result');
+        if (tableResult) tableResult.textContent = '';
+        if (z7Result) z7Result.textContent = '';
+
+        // Reset modals and internal state
+        try {
+            workerIds = [];
+            operationFirstId = '';
+            lastOperationIndex = null;
+            // Re-render modal lists if open
+            const wModal = document.getElementById('workersModal');
+            const oModal = document.getElementById('opsModal');
+            if (wModal && wModal.classList.contains('active')) renderWorkersInputList();
+            if (oModal && oModal.classList.contains('active')) renderOpsInputList();
+        } catch (e) {
+            console.debug?.('clearBtn reset state error:', e?.message);
+        }
+
+        // Re-create one empty operation block
         renderFields();
     }
 });
@@ -1674,6 +1805,7 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
         .forEach(k => {
             obj[k] = localStorage.getItem(k);
         });
+    // Note: `z7_workers_cheat` intentionally excluded from JSON export (keeps local-only notes private)
 
     const jsonContent = JSON.stringify(obj, null, 2);
     const fileName = `z7_backup_${new Date().toISOString().slice(0, 10)}.json`;
@@ -1814,13 +1946,262 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
+// === МОДАЛЬНОЕ ОКНО НОМЕРОВ ПОДТВЕРЖДЕНИЯ ОПЕРАЦИЙ ===
+
+// Возвращает номер подтверждения для операции (index начинается с 1)
+// Логика: если операция отмечена как "последняя" - она пропускается в нумерации,
+// остальные нумеруются последовательно, а пропущенная получает последний номер
+function getOperationLabel(index, totalOps) {
+    if (!operationFirstId || operationFirstId.trim() === '') {
+        return String(index); // По умолчанию порядковый номер
+    }
+    
+    const firstNum = Number.parseInt(operationFirstId, 10);
+    if (Number.isNaN(firstNum)) return String(index);
+    
+    // Если эта операция отмечена как "последняя" - присваиваем ей последний номер
+    if (lastOperationIndex !== null && index === lastOperationIndex) {
+        const lastNum = firstNum + (totalOps - 1);
+        return String(lastNum).padStart(8, '0');
+    }
+    
+    // Для остальных операций: считаем позицию без учёта "последней"
+    let position = index;
+    if (lastOperationIndex !== null && index > lastOperationIndex) {
+        // Если текущая операция после "последней", сдвигаем номер на 1 назад
+        position = index - 1;
+    }
+    
+    const opNum = firstNum + (position - 1);
+    return String(opNum).padStart(8, '0');
+}
+
+// Обновляет текстовые метки с номерами операций в основной части (справа/слева)
+function updateMainOperationLabels() {
+    const blocks = document.querySelectorAll('.op-block');
+    if (!blocks || blocks.length === 0) return;
+    const total = Number.parseInt(document.getElementById('totalOps').value, 10) || blocks.length;
+    blocks.forEach((blk, i) => {
+        const lbl = blk.querySelector('.op-num-label');
+        if (lbl) {
+            try {
+                lbl.textContent = getOperationLabel(i + 1, total);
+            } catch (e) {
+                // Safety: do not break UI if getOperationLabel fails
+                lbl.textContent = String(i + 1);
+            }
+        }
+    });
+}
+
+function renderOpsInputList() {
+    const container = document.getElementById('opsInputList');
+    const count = Number.parseInt(document.getElementById('totalOps').value, 10) || 1;
+    container.innerHTML = '';
+    
+    // Получаем названия операций из полей ввода
+    const opBlocks = document.querySelectorAll('.op-block');
+    
+    for (let i = 1; i <= count; i++) {
+        const row = createEl('div', { className: 'op-input-row' });
+        
+        // Берём название операции из соответствующего блока
+        let opName = `Операция ${i}`;
+        if (opBlocks[i - 1]) {
+            const nameInput = opBlocks[i - 1].querySelector('.op-header-input');
+            if (nameInput && nameInput.value.trim()) {
+                opName = nameInput.value.trim();
+            }
+        }
+        
+        const label = createEl('label', { className: 'op-label', htmlFor: `op_id_${i}` }, `${opName}:`);
+        
+        // Для первой операции - редактируемый input, для остальных - disabled
+        const isFirst = (i === 1);
+        const input = createEl('input', {
+            type: 'text',
+            id: `op_id_${i}`,
+            name: `op_id_${i}`,
+            maxLength: '8',
+            placeholder: isFirst ? '00000000' : 'авто',
+            autocomplete: 'off'
+        });
+        
+        if (isFirst) {
+            input.value = operationFirstId || '';
+            // Разрешаем только цифры
+            input.addEventListener('input', (e) => {
+                e.target.value = e.target.value.replaceAll(/[^0-9]/g, '').substring(0, 8);
+                updateOpsCalculatedValues();
+            });
+        } else {
+            input.disabled = true;
+            // Рассчитываем значение с учётом галочки "последняя"
+            if (operationFirstId && operationFirstId.trim()) {
+                const firstNum = Number.parseInt(operationFirstId, 10);
+                if (!Number.isNaN(firstNum)) {
+                    // Если эта операция отмечена как "последняя" - показываем последний номер
+                    if (lastOperationIndex === i) {
+                        const lastNum = firstNum + (count - 1);
+                        input.value = String(lastNum).padStart(8, '0');
+                    } else {
+                        // Считаем позицию без учёта "последней"
+                        let position = i;
+                        if (lastOperationIndex !== null && i > lastOperationIndex) {
+                            position = i - 1;
+                        }
+                        input.value = String(firstNum + (position - 1)).padStart(8, '0');
+                    }
+                }
+            }
+        }
+        
+        // Галочка "последняя операция" (только для операций кроме первой)
+        const checkboxWrapper = createEl('div', { 
+            className: `op-checkbox-wrapper ${isFirst ? 'hidden' : ''}` 
+        });
+        const checkbox = createEl('input', {
+            type: 'checkbox',
+            id: `op_last_${i}`,
+            name: 'op_last'
+        });
+        checkbox.checked = (lastOperationIndex === i);
+        checkbox.dataset.opIndex = i;
+        
+        checkbox.addEventListener('change', (e) => {
+            if (e.target.checked) {
+                // Снимаем все остальные галочки
+                document.querySelectorAll('#opsInputList input[name="op_last"]').forEach(cb => {
+                    if (cb !== e.target) cb.checked = false;
+                });
+            }
+            // Обновляем отображаемые номера
+            updateOpsCalculatedValues();
+        });
+        
+        const checkboxLabel = createEl('label', { htmlFor: `op_last_${i}` }, 'последняя');
+        checkboxWrapper.append(checkbox, checkboxLabel);
+        
+        row.append(label, input, checkboxWrapper);
+        container.append(row);
+    }
+}
+
+function updateOpsCalculatedValues() {
+    const firstInput = document.getElementById('op_id_1');
+    if (!firstInput) return;
+    
+    const firstVal = firstInput.value.trim();
+    const count = Number.parseInt(document.getElementById('totalOps').value, 10) || 1;
+    
+    // Находим, какая операция отмечена как "последняя"
+    let markedLastIndex = null;
+    document.querySelectorAll('#opsInputList input[name="op_last"]').forEach(cb => {
+        if (cb.checked) {
+            markedLastIndex = Number.parseInt(cb.dataset.opIndex, 10);
+        }
+    });
+    
+    for (let i = 2; i <= count; i++) {
+        const input = document.getElementById(`op_id_${i}`);
+        if (input) {
+            if (firstVal && firstVal.length > 0) {
+                const firstNum = Number.parseInt(firstVal, 10);
+                if (!Number.isNaN(firstNum)) {
+                    // Если эта операция отмечена как "последняя" - показываем последний номер
+                    if (markedLastIndex === i) {
+                        const lastNum = firstNum + (count - 1);
+                        input.value = String(lastNum).padStart(8, '0');
+                    } else {
+                        // Считаем позицию без учёта "последней"
+                        let position = i;
+                        if (markedLastIndex !== null && i > markedLastIndex) {
+                            position = i - 1;
+                        }
+                        input.value = String(firstNum + (position - 1)).padStart(8, '0');
+                    }
+                } else {
+                    input.value = '';
+                }
+            } else {
+                input.value = '';
+            }
+        }
+    }
+    // Обновляем метки в основной части, чтобы изменения в модальном окне были видны сразу
+    try { updateMainOperationLabels(); } catch (e) { /* ignore */ }
+}
+
+function saveOperationIds() {
+    const firstInput = document.getElementById('op_id_1');
+    if (firstInput) {
+        let val = firstInput.value.trim();
+        if (val && val.length > 0 && val.length < 8) {
+            val = val.padStart(8, '0');
+        }
+        operationFirstId = val;
+    }
+    
+    // Проверяем, какая галочка "последняя операция" выбрана
+    lastOperationIndex = null;
+    document.querySelectorAll('#opsInputList input[name="op_last"]').forEach(cb => {
+        if (cb.checked) {
+            lastOperationIndex = Number.parseInt(cb.dataset.opIndex, 10);
+        }
+    });
+    
+    document.getElementById('opsModal').classList.remove('active');
+    
+    // Перерисовываем поля операций с учётом "последней операции"
+    renderFields();
+    // Обновляем метки операций в основной части
+    try { updateMainOperationLabels(); } catch (e) { /* ignore */ }
+}
+
+function resetOperationIds() {
+    operationFirstId = '';
+    lastOperationIndex = null;
+    renderOpsInputList();
+    try { updateMainOperationLabels(); } catch (e) { /* ignore */ }
+}
+
+document.getElementById('setOpsBtn').addEventListener('click', () => {
+    renderOpsInputList();
+    document.getElementById('opsModal').classList.add('active');
+});
+
+document.getElementById('closeOpsModal').addEventListener('click', () => {
+    document.getElementById('opsModal').classList.remove('active');
+});
+
+document.getElementById('opsModal').addEventListener('click', (e) => {
+    if (e.target.id === 'opsModal') {
+        document.getElementById('opsModal').classList.remove('active');
+    }
+});
+
+document.getElementById('saveOpsBtn').addEventListener('click', saveOperationIds);
+document.getElementById('resetOpsBtn').addEventListener('click', resetOperationIds);
+
+// При изменении количества операций обновляем модальное окно (если открыто)
+document.getElementById('totalOps').addEventListener('change', () => {
+    const modal = document.getElementById('opsModal');
+    if (modal && modal.classList.contains('active')) {
+        renderOpsInputList();
+    }
+});
+
 // === МОДАЛЬНОЕ ОКНО НОМЕРОВ ИСПОЛНИТЕЛЕЙ ===
 let workerIds = []; // Массив 8-значных номеров исполнителей
 
 function getWorkerLabel(index) {
     // index начинается с 1
     if (workerIds[index - 1] && workerIds[index - 1].trim()) {
-        return workerIds[index - 1].trim();
+        // Ensure only digits are returned; pad to 8 if partially entered
+        const raw = String(workerIds[index - 1]).trim();
+        const digits = raw.replace(/[^0-9]/g, '');
+        if (digits.length === 0) return String(index);
+        return digits.length >= 8 ? digits : digits.padStart(8, '0');
     }
     return String(index); // По умолчанию порядковый номер
 }
@@ -1854,9 +2235,23 @@ function renderWorkersInputList() {
         row.append(label, input);
         container.append(row);
     }
+    // Load saved cheat notes into textarea (if any) and make it inactive by default
+    try {
+        const cheatEl = document.getElementById('workersCheat');
+        const editBtn = document.getElementById('editWorkersBtn');
+        if (cheatEl) {
+            const saved = localStorage.getItem('z7_workers_cheat') || '';
+            cheatEl.value = saved;
+            // By default the cheat field is inactive until user presses "Изменить"
+            cheatEl.disabled = true;
+        }
+        if (editBtn) editBtn.textContent = 'Изменить';
+    } catch (e) {
+        console.debug?.('renderWorkersInputList cheat load error:', e?.message);
+    }
 }
 
-function saveWorkerIds() {
+async function saveWorkerIds() {
     const inputs = document.querySelectorAll('#workersInputList input');
     workerIds = [];
     inputs.forEach((input, idx) => {
@@ -1871,6 +2266,7 @@ function saveWorkerIds() {
             workerIds[idx] = '';
         }
     });
+    // Close modal; do NOT persist cheat here (user requested Save should not save cheat)
     document.getElementById('workersModal').classList.remove('active');
 }
 
@@ -1896,11 +2292,72 @@ document.getElementById('workersModal').addEventListener('click', (e) => {
 
 document.getElementById('saveWorkersBtn').addEventListener('click', saveWorkerIds);
 document.getElementById('resetWorkersBtn').addEventListener('click', resetWorkerIds);
+// rememberWorkersBtn removed — its functionality is merged into edit button.
 
-// При изменении количества исполнителей обновляем модальное окно (если открыто)
-document.getElementById('workerCount').addEventListener('change', () => {
-    const modal = document.getElementById('workersModal');
-    if (modal && modal.classList.contains('active')) {
-        renderWorkersInputList();
+// Toggle edit mode for cheat textarea
+document.getElementById('editWorkersBtn').addEventListener('click', async (e) => {
+    try {
+        const cheatEl = document.getElementById('workersCheat');
+        const btn = e.target;
+        if (!cheatEl || !btn) return;
+        if (cheatEl.disabled) {
+            // enable editing
+            cheatEl.disabled = false;
+            cheatEl.focus();
+            btn.textContent = 'Готово';
+        } else {
+            // disable editing and auto-save the cheat
+            cheatEl.disabled = true;
+            btn.textContent = 'Изменить';
+            try {
+                const safeText = sanitizeInput(cheatEl.value || '', 5000);
+                await safeLocalStorageSet('z7_workers_cheat', safeText);
+                try { if (tauriDialog?.message) tauriDialog.message('Шпаргалка сохранена', { title: 'Инфо' }); } catch(e){}
+            } catch (saveErr) {
+                console.error('Auto-save workersCheat error:', saveErr);
+            }
+        }
+    } catch (err) {
+        console.error('editWorkersBtn toggle error:', err);
     }
 });
+
+// При изменении количества исполнителей обновляем модальное окно (если открыто)
+const workerCountEl = document.getElementById('workerCount');
+if (workerCountEl) {
+    // While typing: keep only digits and clamp to max immediately
+    workerCountEl.addEventListener('input', (e) => {
+        let v = String(e.target.value).replace(/[^0-9]/g, '');
+        if (v !== '') {
+            const n = Number.parseInt(v, 10);
+            if (!Number.isNaN(n)) {
+                const clamped = Math.max(1, Math.min(10, n));
+                if (clamped !== n) v = String(clamped);
+            }
+        }
+        e.target.value = v;
+    });
+
+    // Paste: sanitize and clamp
+    workerCountEl.addEventListener('paste', (e) => {
+        e.preventDefault();
+        const text = (e.clipboardData || window.clipboardData).getData('text') || '';
+        const digits = text.replace(/[^0-9]/g, '');
+        const n = Number.parseInt(digits || '0', 10) || 0;
+        const clamped = validateNumber(n, 1, 10);
+        workerCountEl.value = clamped;
+        const modal = document.getElementById('workersModal');
+        if (modal && modal.classList.contains('active')) {
+            renderWorkersInputList();
+        }
+    });
+
+    workerCountEl.addEventListener('change', (e) => {
+        const val = validateNumber(e.target.value, 1, 10);
+        e.target.value = val;
+        const modal = document.getElementById('workersModal');
+        if (modal && modal.classList.contains('active')) {
+            renderWorkersInputList();
+        }
+    });
+}

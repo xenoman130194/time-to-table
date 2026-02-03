@@ -24,7 +24,7 @@
         </h2>
         <div class="btn-group-row">
             <button class="btn-sm" id="aboutBtn">О Программе</button>
-            <button class="btn-sm" id="clearBtn">Очистить</button>
+            <button class="btn-sm" id="clearBtn">Очистить (F5)</button>
             <button class="btn-sm" id="importBtn">Импорт (JSON)</button>
             <button class="btn-sm" id="exportBtn">Экспорт (JSON)</button>
             <input type="file" id="fileInput" accept=".json">
@@ -71,12 +71,18 @@
             </div>
         </div>
 
-        <div class="input-group"><label for="totalOps">Кол-во операций</label><input type="number" id="totalOps" min="1" max="50" value="1"></div>
+        <div class="input-group">
+            <label for="totalOps">Кол-во операций</label>
+            <div class="worker-split-row">
+                <input type="number" id="totalOps" min="1" max="20" step="1" value="1" inputmode="numeric">
+                <button class="btn-sm" id="setOpsBtn">ЗАДАТЬ №</button>
+            </div>
+        </div>
         <div class="input-group">
             <label for="workerCount">Исполнителей</label>
             <div class="worker-split-row">
-                <input type="number" id="workerCount" min="1" max="20" value="1">
-                <button class="btn-sm" id="setWorkersBtn">ЗАДАТЬ</button>
+                <input type="number" id="workerCount" min="1" max="10" step="1" value="1" inputmode="numeric">
+                <button class="btn-sm" id="setWorkersBtn">ЗАДАТЬ №</button>
             </div>
         </div>
         
@@ -90,7 +96,7 @@
         
         <div class="input-group"><label for="resIz">Rиз (Мом)</label><input type="text" id="resIz" placeholder="..." maxlength="6" inputmode="numeric" pattern="[0-9]*" autocomplete="off"></div>
         <div class="input-group"><label for="coefK">Коэф. K</label><input type="text" id="coefK" placeholder="..." maxlength="5" inputmode="decimal" pattern="[0-9]+([.,][0-9]{1,2})?" autocomplete="off"></div>
-        <div class="input-group"><label for="orderName">Заказ</label><input type="text" id="orderName" placeholder="Номер заказа" maxlength="12" inputmode="numeric" pattern="[0-9]*" autocomplete="off"></div>
+        <div class="input-group"><label for="orderName">Заказ</label><input type="text" id="orderName" placeholder="Номер заказа" maxlength="12" inputmode="numeric" pattern="[0-9]*" autocomplete="on"></div>
         <div class="input-group"><label for="itemName">Наименование</label><input type="text" id="itemName" placeholder="Наименование" maxlength="200"></div>
     </div>
 
@@ -121,6 +127,24 @@
     <div id="historyList"></div>
 </div>
 
+<!-- Модальное окно задания номеров подтверждения операций -->
+<div id="opsModal" class="modal-overlay">
+    <div class="modal-content modal-content-wide">
+        <div class="modal-header">
+            <h2>Номера подтверждения операций</h2>
+            <button class="modal-close" id="closeOpsModal">&times;</button>
+        </div>
+        <div class="modal-body" id="opsModalBody">
+            <p class="workers-hint">Введите 8-значный номер подтверждения для первой операции.<br>Номера подтверждений последующих операций рассчитываются автоматически (+1).<br>Галочка "ПОСЛЕДНЯЯ" означает, что операции будет присвоен последний порядковый номер.<br>НО, это не будет учитываться в расчетах. Операции будут расчитываться последовательно.</p>
+            <div id="opsInputList"></div>
+            <div class="workers-actions">
+                <button class="btn-sm btn-save" id="saveOpsBtn">Сохранить</button>
+                <button class="btn-sm btn-reset" id="resetOpsBtn">Сбросить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Модальное окно задания номеров исполнителей -->
 <div id="workersModal" class="modal-overlay">
     <div class="modal-content">
@@ -129,11 +153,26 @@
             <button class="modal-close" id="closeWorkersModal">&times;</button>
         </div>
         <div class="modal-body" id="workersModalBody">
-            <p class="workers-hint">Введите 8-значный номер для каждого исполнителя.<br>Оставьте пустым для использования порядкового номера.</p>
-            <div id="workersInputList"></div>
-            <div class="workers-actions">
-                <button class="btn-sm btn-save" id="saveWorkersBtn">Сохранить</button>
-                <button class="btn-sm btn-reset" id="resetWorkersBtn">Сбросить</button>
+            <div class="workers-modal-flex">
+                <div class="workers-modal-left">
+                    <p class="workers-hint">Введите 8-значный номер для каждого исполнителя.<br>Оставьте пустым для использования порядкового номера.</p>
+                    <div id="workersInputList"></div>
+                </div>
+                <div class="workers-modal-right">
+                    <div class="workers-cheat-container">
+                        <p class="workers-cheat-sub">Свободное поле для заметок.<br>Текст сохраняется локально.<br>НЕ экспортируется в JSON.</p>
+                        <textarea id="workersCheat" class="workers-cheat-textarea" placeholder="Введите заметки, инструкции, номера..."></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="workers-actions workers-actions--compact">
+                <div class="workers-actions-left">
+                    <button class="btn-sm btn-save" id="saveWorkersBtn">Сохранить</button>
+                    <button class="btn-sm btn-reset" id="resetWorkersBtn">Сбросить</button>
+                </div>
+                <div class="workers-actions-right">
+                    <button class="btn-sm btn-edit" id="editWorkersBtn">Изменить</button>
+                </div>
             </div>
         </div>
     </div>
