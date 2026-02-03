@@ -1,6 +1,6 @@
 [package]
 name = "time-to-table"
-version = "0.6.5"
+version = "0.6.6"
 description = "Калькулятор для ленивых - расчёт времени операций"
 authors = ["Галимзянов Г.Р."]
 edition = "2021"
