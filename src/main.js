@@ -173,6 +173,28 @@ function excelSanitizeCell(str) {
     return str;
 }
 
+// Санитизация числового ввода: допускаем до 5 цифр в целой части и до 2 цифр в дробной
+function sanitizeDecimalInput(raw) {
+    if (raw === null || raw === undefined) return '';
+    let s = String(raw);
+    // Оставляем только цифры и разделители . и ,
+    s = s.replace(/[^0-9.,]/g, '');
+    // Найдём первый разделитель
+    const m = s.match(/[.,]/);
+    if (!m) {
+        // Только целая часть, обрезаем до 5 цифр
+        return s.slice(0, 5);
+    }
+    const sep = m[0];
+    const idx = s.indexOf(sep);
+    let intPart = s.slice(0, idx).replace(/[.,]/g, '').slice(0, 5);
+    let fracPart = s.slice(idx + 1).replace(/[.,]/g, '').slice(0, 2);
+    // Если дробная часть ещё пустая — возвращаем с точкой, чтобы пользователь мог продолжить вводить
+    if (fracPart.length === 0) return intPart + '.';
+    // Нормализуем разделитель на точку для дальнейшего парсинга
+    return intPart + '.' + fracPart; // используем точку внутренно для парсинга
+}
+
 function validateNumber(value, min, max) {
     const num = Number.parseInt(value, 10);
     if (Number.isNaN(num)) return min;
@@ -296,6 +318,48 @@ try {
     console.debug?.('Riz input listener attach failed:', e?.message);
 }
 
+// Ограничение/санитизация ввода для длительности обеда (до 5 цифр + 2 дробных)
+try {
+    const lunchDurEl = document.getElementById('lunchDur');
+    if (lunchDurEl) {
+        lunchDurEl.addEventListener('input', (e) => {
+            const v = sanitizeDecimalInput(e.target.value);
+            e.target.value = v;
+        });
+        lunchDurEl.addEventListener('blur', (e) => {
+            let v = sanitizeDecimalInput(e.target.value);
+            if (v === '') v = '0';
+            if (v.endsWith('.')) v = v + '0';
+            e.target.value = v;
+        });
+        lunchDurEl.setAttribute('inputmode', 'decimal');
+        lunchDurEl.setAttribute('autocomplete', 'off');
+    }
+} catch (e) {
+    console.debug?.('lunchDur listener attach failed:', e?.message);
+}
+
+// Live character counters for statusBefore, workExtra, devRec (max 300)
+try {
+    const fields = ['statusBefore', 'workExtra', 'devRec'];
+    fields.forEach(id => {
+        const el = document.getElementById(id);
+        const ctr = document.getElementById(id + '_counter');
+        if (!el || !ctr) return;
+        const update = () => {
+            const max = Number.parseInt(el.getAttribute('maxlength') || '300', 10) || 300;
+            const len = String(el.value || '').length;
+            const remaining = Math.max(0, max - len);
+            ctr.textContent = `осталось ${remaining} / ${max}`;
+        };
+        // Init
+        update();
+        el.addEventListener('input', update);
+    });
+} catch (e) {
+    console.debug?.('char counter attach failed:', e?.message);
+}
+
 // Ограничение ввода в поле 'Коэф. K' — числа с максимум 2 десятичными знаками
 try {
     const kInputEl = document.getElementById('coefK');
@@ -416,7 +480,18 @@ function restoreHistoryFromStorage() {
                 const infoText = createEl('span', { style: 'font-size:12px' }, ` Строк: ${data.rows.length}`);
                 const delBtn = createEl('button', { className: 'btn-sm btn-del-history' }, 'Удалить');
                 delBtn.onclick = async () => {
-                    if (confirm('Удалить эту запись из истории?')) {
+                    let confirmed = false;
+                    if (tauriDialog?.confirm) {
+                        try {
+                            confirmed = await tauriDialog.confirm('Удалить эту запись из истории?', { title: 'Подтверждение', kind: 'warning' });
+                        } catch (e) {
+                            console.error('Tauri confirm error:', e);
+                            confirmed = globalThis.confirm('Удалить эту запись из истории?');
+                        }
+                    } else {
+                        confirmed = globalThis.confirm('Удалить эту запись из истории?');
+                    }
+                    if (confirmed) {
                         entryDiv.remove();
                         await saveHistoryToStorage();
                         updateFirstPauseVisibility();
@@ -542,7 +617,30 @@ function updateFirstPauseVisibility() {
     if (isChainMode && !isFirstCalculation) {
         toggleDiv.style.display = 'flex';
     } else {
+        // Скрываем переключатель паузы и сбрасываем значение паузы в первом блоке
         toggleDiv.style.display = 'none';
+        try {
+            const chk = firstOpBlock.querySelector('.order-pause-toggle');
+            const breakGroup = firstOpBlock.querySelector('.break-container');
+            const breakInput = firstOpBlock.querySelector('.op-break-val');
+            const breakUnit = firstOpBlock.querySelector('.op-break-unit');
+            if (chk) {
+                chk.checked = false;
+            }
+            if (breakGroup) {
+                breakGroup.style.display = 'none';
+            }
+            if (breakInput) {
+                breakInput.value = '0';
+                // trigger input event to ensure any sanitizers run
+                breakInput.dispatchEvent(new Event('input'));
+            }
+            if (breakUnit) {
+                breakUnit.value = 'min';
+            }
+        } catch (e) {
+            console.debug?.('reset pause visibility error:', e?.message);
+        }
     }
 }
 
@@ -568,6 +666,17 @@ function renderFields() {
             container.removeChild(currentBlocks[i]);
         }
     }
+    // If operations modal is open, re-render its inputs and recalculate confirmation numbers
+    try {
+        const oModal = document.getElementById('opsModal');
+        if (oModal && oModal.classList.contains('active')) {
+            renderOpsInputList();
+            updateOpsCalculatedValues();
+        }
+    } catch (e) {
+        console.debug?.('renderFields modal update error:', e?.message);
+    }
+    try { updateMainOperationLabels(); } catch (e) { /* ignore */ }
 }
 
 function createOperationBlock(index) {
@@ -592,21 +701,27 @@ function createOperationBlock(index) {
     const workGroup = createEl('div', { className: 'time-group' });
     workGroup.append(createEl('label', { htmlFor: `op_duration_${index}` }, 'Время:'));
     const workInput = createEl('input', {
-        type: 'number',
+        type: 'text',
         className: 'op-duration',
         id: `op_duration_${index}`,
         name: `op_duration_${index}`,
-        step: '1',
-        min: '0',
+        inputmode: 'decimal',
+        pattern: '\\d{0,5}([.,]\\d{1,2})?',
+        maxlength: '8',
         value: '10',
         autocomplete: 'off'
     });
-    // Валидация отрицательных значений для op-duration
-    workInput.addEventListener('change', (e) => {
-        let value = Number.parseFloat(e.target.value);
-        if (value < 0) {
-            e.target.value = 0;
-        }
+    // Санитизация и ограничение ввода: до 5 цифр целой части и 2 дробных
+    workInput.addEventListener('input', (e) => {
+        const v = sanitizeDecimalInput(e.target.value);
+        e.target.value = v;
+    });
+    workInput.addEventListener('blur', (e) => {
+        let v = sanitizeDecimalInput(e.target.value);
+        if (v === '') v = '0';
+        // Если пользователь оставил только разделитель, дополним 0:  '10.' -> '10.0'
+        if (v.endsWith('.')) v = v + '0';
+        e.target.value = v;
     });
     workGroup.append(workInput);
     const workUnit = createEl('select', {
@@ -637,21 +752,26 @@ function createOperationBlock(index) {
     const breakGroup = createEl('div', { className: 'time-group break-container' });
     breakGroup.append(createEl('label', { htmlFor: `op_break_${index}` }, 'Пауза:'));
     const breakInput = createEl('input', {
-        type: 'number',
+        type: 'text',
         className: 'op-break-val',
         id: `op_break_${index}`,
         name: `op_break_${index}`,
+        inputmode: 'decimal',
+        pattern: '\\d{0,5}([.,]\\d{1,2})?',
+        maxlength: '8',
         value: '0',
-        step: '1',
-        min: '0',
         autocomplete: 'off'
     });
-    // Валидация отрицательных значений для op-break-val
-    breakInput.addEventListener('change', (e) => {
-        let value = Number.parseFloat(e.target.value);
-        if (value < 0) {
-            e.target.value = 0;
-        }
+    // Санитизация и ограничение ввода: до 5 цифр целой части и 2 дробных
+    breakInput.addEventListener('input', (e) => {
+        const v = sanitizeDecimalInput(e.target.value);
+        e.target.value = v;
+    });
+    breakInput.addEventListener('blur', (e) => {
+        let v = sanitizeDecimalInput(e.target.value);
+        if (v === '') v = '0';
+        if (v.endsWith('.')) v = v + '0';
+        e.target.value = v;
     });
     breakGroup.append(breakInput);
     const breakUnit = createEl('select', {
@@ -674,7 +794,7 @@ function createOperationBlock(index) {
         name: `op_pause_${index}`,
         style: 'margin:0;'
     });
-    toggleDiv.append(chk, createEl('label', { htmlFor: `op_pause_${index}`, style: 'margin-left:4px; cursor:pointer;' }, 'Пауза перед началом (перерыв)'));
+    toggleDiv.append(chk, createEl('label', { htmlFor: `op_pause_${index}`, style: 'margin-left:4px; cursor:pointer;' }, 'Пауза перед началом'));
     
     // Скрыть паузу для всех блоков кроме первого
     if (index !== 1) {
@@ -684,6 +804,16 @@ function createOperationBlock(index) {
     const updateBreakVis = () => {
         breakGroup.style.display = chk.checked ? 'flex' : 'none';
         toggleDiv.style.opacity = chk.checked ? '0.5' : '1';
+        if (!chk.checked) {
+            try {
+                // Reset break value when user unchecks the pause
+                breakInput.value = '0';
+                breakInput.dispatchEvent(new Event('input'));
+                if (breakGroup) breakGroup.style.display = 'none';
+            } catch (e) {
+                console.debug?.('updateBreakVis reset error:', e?.message);
+            }
+        }
     };
     
     chk.addEventListener('change', updateBreakVis);
@@ -713,7 +843,10 @@ async function generateTable() {
     const timeMode = document.getElementById('timeMode').value;
     const lunchStartInput = document.getElementById('lunchStart').value;
     const lunchStartInput2 = document.getElementById('lunchStart2').value;
-    const lunchDurMin = validateNumber(document.getElementById('lunchDur').value, 0, 480);
+    // Lunch duration may be fractional now; parse as float and clamp between 0 and 480
+    let lunchDurMin = Number.parseFloat(String(document.getElementById('lunchDur').value).replace(',', '.')) || 0;
+    if (!Number.isFinite(lunchDurMin)) lunchDurMin = 0;
+    lunchDurMin = Math.max(0, Math.min(480, lunchDurMin));
     const isChain = document.getElementById('chainMode').checked;
     // Validate select values to expected enums
     if (timeMode !== 'per_worker' && timeMode !== 'total') {
@@ -995,7 +1128,7 @@ async function generateTable() {
     const select = document.getElementById('techCardSelect');
     const cardNameBase = select.value === 'manual' ? 'Ручной ввод' : select.options[select.selectedIndex].text;
     const orderInput = sanitizeInput(document.getElementById('orderName')?.value || '', 200);
-    const nameInput = sanitizeInput(document.getElementById('itemName')?.value || '', 200);
+    const nameInput = sanitizeInput(document.getElementById('itemName')?.value || '', 15);
     const cardName = (orderInput ? (orderInput + ' ') : '') + (nameInput ? nameInput : cardNameBase);
     
     const lunchConfig = { h: lh, m: lm, h2: lh2, m2: lm2, dur: lunchDurMin };
@@ -1029,7 +1162,18 @@ async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isCh
         const infoText = createEl('span', { style: 'font-size:12px' }, ` Строк: ${data.length}`);
         const delBtn = createEl('button', { className: 'btn-sm btn-del-history' }, 'Удалить');
         delBtn.onclick = async () => {
-            if (confirm('Удалить эту запись из истории?')) {
+            let confirmed = false;
+            if (tauriDialog?.confirm) {
+                try {
+                    confirmed = await tauriDialog.confirm('Удалить эту запись из истории?', { title: 'Подтверждение', kind: 'warning' });
+                } catch (e) {
+                    console.error('Tauri confirm error:', e);
+                    confirmed = globalThis.confirm('Удалить эту запись из истории?');
+                }
+            } else {
+                confirmed = globalThis.confirm('Удалить эту запись из истории?');
+            }
+            if (confirmed) {
                 entryDiv.remove();
                 await saveHistoryToStorage();
                 updateFirstPauseVisibility();
@@ -1337,8 +1481,20 @@ async function exportToExcel() {
         </Row>
         `;
 
-        data.z7.forEach(line => {
-            xmlBody += `
+        data.z7.forEach((line, zi) => {
+            // For the "выполненные работы" row (index 1) force a taller row
+            // so it can contain ~3 lines of wrapped text in the exported XML.
+            if (zi === 1) {
+                xmlBody += `
+            <Row ss:Height="48" ss:AutoFitHeight="0">
+                <Cell ss:Index="2" ss:MergeAcross="9" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(line))}</Data></Cell>
+            </Row>
+            <Row>
+                <Cell ss:Index="2" ss:MergeAcross="9" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String"></Data></Cell>
+            </Row>
+            `;
+            } else {
+                xmlBody += `
             <Row>
                 <Cell ss:Index="2" ss:MergeAcross="9" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(line))}</Data></Cell>
             </Row>
@@ -1346,6 +1502,7 @@ async function exportToExcel() {
                 <Cell ss:Index="2" ss:MergeAcross="9" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String"></Data></Cell>
             </Row>
             `;
+            }
         });
 
         xmlBody += `<Row></Row>`;
@@ -1493,14 +1650,14 @@ function buildExcelXml(xmlBody) {
 }
 
 async function downloadExcelFile(xmlContent) {
-    const fileName = `История_Расчетов_${new Date().toLocaleDateString('ru-RU').replaceAll('.', '-')}.xls`;
+    const fileName = `История_Расчетов_${new Date().toLocaleDateString('ru-RU').replaceAll('.', '-')}.xml`;
     
     // Пробуем использовать Tauri API
     if (tauriDialog?.save && tauriInvoke) {
         try {
-            const filePath = await tauriDialog.save({
+                const filePath = await tauriDialog.save({
                 defaultPath: fileName,
-                filters: [{ name: 'Excel', extensions: ['xls'] }]
+                filters: [{ name: 'XML', extensions: ['xml'] }]
             });
             
             if (filePath) {
@@ -1524,7 +1681,7 @@ async function downloadExcelFile(xmlContent) {
     }
     
     // Fallback на браузерный метод
-    const blob = new Blob([xmlContent], { type: 'application/vnd.ms-excel' });
+    const blob = new Blob([xmlContent], { type: 'application/xml' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.href = url;

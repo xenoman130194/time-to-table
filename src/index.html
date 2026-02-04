@@ -56,33 +56,31 @@
             </fieldset>
         </div>
 
-        <div class="lunch-row">
-            <div class="lunch-field">
-                <label for="lunchStart">Обед 1 (12:00)</label>
-                <input type="time" id="lunchStart" value="12:00">
-            </div>
-            <div class="lunch-field">
-                <label for="lunchStart2">Обед 2 (00:00)</label>
-                <input type="time" id="lunchStart2" value="00:00">
-            </div>
-            <div class="lunch-duration">
-                <label for="lunchDur">Обед (мин)</label>
-                <input type="number" id="lunchDur" value="45" min="0" max="480" step="5">
-            </div>
+        <div class="input-group">
+            <label for="lunchStart">Обед 1 (12:00)</label>
+            <input type="time" id="lunchStart" value="12:00">
+        </div>
+        <div class="input-group">
+            <label for="lunchStart2">Обед 2 (00:00)</label>
+            <input type="time" id="lunchStart2" value="00:00">
+        </div>
+        <div class="input-group">
+            <label for="lunchDur">Обед (мин)</label>
+            <input type="text" id="lunchDur" class="op-break-val" inputmode="decimal" pattern="\\d{0,5}([.,]\\d{1,2})?" maxlength="8" value="45" autocomplete="off">
         </div>
 
         <div class="input-group">
             <label for="totalOps">Кол-во операций</label>
             <div class="worker-split-row">
                 <input type="number" id="totalOps" min="1" max="20" step="1" value="1" inputmode="numeric">
-                <button class="btn-sm" id="setOpsBtn">ЗАДАТЬ №</button>
+                <button class="btn-sm" id="setOpsBtn">ЗАДАТЬ</button>
             </div>
         </div>
         <div class="input-group">
             <label for="workerCount">Исполнителей</label>
             <div class="worker-split-row">
                 <input type="number" id="workerCount" min="1" max="10" step="1" value="1" inputmode="numeric">
-                <button class="btn-sm" id="setWorkersBtn">ЗАДАТЬ №</button>
+                <button class="btn-sm" id="setWorkersBtn">ЗАДАТЬ</button>
             </div>
         </div>
         
@@ -94,16 +92,29 @@
             </select>
         </div>
         
+        <div class="input-group"><label for="orderName">Заказ</label><input type="text" id="orderName" placeholder="Номер заказа" maxlength="12" inputmode="numeric" pattern="[0-9]*" autocomplete="on"></div>
+        <div class="input-group"><label for="itemName">Наименование(Кратко)</label><input type="text" id="itemName" placeholder="Наименование" maxlength="50"></div>
         <div class="input-group"><label for="resIz">Rиз (Мом)</label><input type="text" id="resIz" placeholder="..." maxlength="6" inputmode="numeric" pattern="[0-9]*" autocomplete="off"></div>
         <div class="input-group"><label for="coefK">Коэф. K</label><input type="text" id="coefK" placeholder="..." maxlength="5" inputmode="decimal" pattern="[0-9]+([.,][0-9]{1,2})?" autocomplete="off"></div>
-        <div class="input-group"><label for="orderName">Заказ</label><input type="text" id="orderName" placeholder="Номер заказа" maxlength="12" inputmode="numeric" pattern="[0-9]*" autocomplete="on"></div>
-        <div class="input-group"><label for="itemName">Наименование</label><input type="text" id="itemName" placeholder="Наименование" maxlength="200"></div>
+        
     </div>
 
     <div class="text-fields-row">
-        <div class="input-group"><label for="statusBefore">Состояние до ремонта (п.1)</label><input type="text" id="statusBefore" value="замечаний нет" maxlength="500"></div>
-        <div class="input-group"><label for="workExtra">Доп. работы (п.3)</label><input type="text" id="workExtra" value="нет" maxlength="500"></div>
-        <div class="input-group"><label for="devRec">Рекомендации (п.5)</label><input type="text" id="devRec" value="нет" maxlength="500"></div>
+        <div class="input-group">
+            <label for="statusBefore">Состояние до ремонта (п.1)</label>
+            <input type="text" id="statusBefore" value="замечаний нет" maxlength="300">
+            <div class="char-counter" id="statusBefore_counter">300</div>
+        </div>
+        <div class="input-group">
+            <label for="workExtra">Доп. работы (п.3)</label>
+            <input type="text" id="workExtra" value="нет" maxlength="300">
+            <div class="char-counter" id="workExtra_counter">300</div>
+        </div>
+        <div class="input-group">
+            <label for="devRec">Рекомендации (п.5)</label>
+            <input type="text" id="devRec" value="нет" maxlength="300">
+            <div class="char-counter" id="devRec_counter">300</div>
+        </div>
     </div>
 
     <div id="fieldsContainer"></div>
@@ -119,8 +130,8 @@
         <div class="history-actions">
             <button class="btn-sm" id="clearHistoryBtn">Очистить историю</button>
             <div class="export-wrapper">
-                <button class="btn-sm" id="exportExcelBtn">Скачать историю (.xls)</button>
-                <span class="excel-note">⚠️ Файл откроется с предупреждением в Excel (это безопасно)</span>
+                <button class="btn-sm" id="exportExcelBtn">Скачать историю (.xml)</button>
+                <span class="excel-note">ПКМ -> Открыть с помощью -> Office XML Handler.<br>⚠️ Либо ассоциировать XML с Office XML Handler. ⚠️<br>_____________________________________________________________</span>
             </div>
         </div>
     </div>
@@ -135,7 +146,7 @@
             <button class="modal-close" id="closeOpsModal">&times;</button>
         </div>
         <div class="modal-body" id="opsModalBody">
-            <p class="workers-hint">Введите 8-значный номер подтверждения для первой операции.<br>Номера подтверждений последующих операций рассчитываются автоматически (+1).<br>Галочка "ПОСЛЕДНЯЯ" означает, что операции будет присвоен последний порядковый номер.<br>НО, это не будет учитываться в расчетах. Операции будут расчитываться последовательно.</p>
+            <p class="workers-hint">Введите 8-значный номер подтверждения для первой операции.<br>Номера подтверждений последующих операций рассчитываются автоматически (+1).<br>Галочка "ПОСЛЕДНЯЯ" означает, что операции будет присвоен последний порядковый номер.<br>НО, это не будет учитываться в расчетах. Операции будут расчитываться последовательно.<br>Удобно при наличии ОДНОЙ подоперации в заказе.</p>
             <div id="opsInputList"></div>
             <div class="workers-actions">
                 <button class="btn-sm btn-save" id="saveOpsBtn">Сохранить</button>

@@ -38,11 +38,6 @@ body {
 /* Скрытый file input */
 #fileInput { display: none; }
 
-/* Техкарта - span 2 колонки */
-.setup-grid > .input-group:first-child {
-    grid-column: span 2;
-}
-
 /* Контейнер select + кнопки техкарты */
 .setup-grid > .input-group:first-child > div {
     display: flex;
@@ -51,26 +46,6 @@ body {
 
 #techCardSelect {
     flex-grow: 1;
-}
-
-/* Группа обедов - span 2 + flex row */
-.setup-grid > .lunch-row {
-    grid-column: span 2;
-    display: flex;
-    flex-direction: row;
-    gap: 10px;
-}
-
-.lunch-row > .lunch-field {
-    flex: 1.5;
-    display: flex;
-    flex-direction: column;
-}
-
-.lunch-row > .lunch-duration {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
 }
 
 /* Текстовые поля в ряд */
@@ -105,7 +80,7 @@ body {
 
 .setup-grid { 
     display: grid; 
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); 
+    grid-template-columns: repeat(6, 1fr); 
     gap: 15px; 
     margin-bottom: 15px; 
     align-items: flex-end; 
@@ -116,6 +91,13 @@ body {
     gap: 15px;
     margin-bottom: 25px;
     width: 100%;
+}
+
+.char-counter {
+    font-size: 12px;
+    color: #6b7280;
+    margin-top: 6px;
+    text-align: right;
 }
 
 .input-group { 
@@ -145,6 +127,100 @@ input, select {
 input:focus, select:focus { 
     border-color: #3498db; 
     outline: none; 
+}
+
+/* Grid layout assignments - optimized 6-column distribution (3 rows) */
+
+/* Row 1: Техкарта (3) + Дата (1) + Время (1) + Режим (1) = 6 cols */
+.setup-grid > .input-group:first-child {
+    grid-column: span 3;
+}
+
+.input-group:has(#startDate),
+.input-group:has(#startTime),
+.input-group:has(#chainMode) {
+    grid-column: span 1;
+}
+
+/* Row 2: Обеды (1+1+1) + Операции (1) + Исполнители (1) + Тип времени (1) = 6 cols */
+.input-group:has(#lunchStart),
+.input-group:has(#lunchStart2),
+.input-group:has(#lunchDur),
+.input-group:has(#totalOps),
+.input-group:has(#workerCount),
+.input-group:has(#timeMode) {
+    grid-column: span 1;
+}
+
+/* Row 3: Заказ (1) + Наименование (3) + Rиз (1) + Коэф.K (1) = 6 cols */
+.input-group:has(#orderName) {
+    grid-column: span 1;
+}
+
+.input-group:has(#itemName) {
+    grid-column: span 3;
+}
+
+.input-group:has(#resIz),
+.input-group:has(#coefK) {
+    grid-column: span 1;
+}
+
+/* Field widths - controlled by grid columns */
+#itemName {
+    width: 100%;
+}
+
+#resIz, #coefK {
+    width: 100%;
+}
+
+#orderName {
+    width: 100%;
+}
+
+/* Lunch fields alignment */
+#lunchStart, #lunchStart2, #lunchDur {
+    width: 100%;
+    height: 38px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 900px) {
+    .setup-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+    /* 3-column layout */
+    .setup-grid > .input-group:first-child {
+        grid-column: span 3;
+    }
+    .input-group:has(#startDate),
+    .input-group:has(#startTime),
+    .input-group:has(#chainMode),
+    .input-group:has(#lunchStart),
+    .input-group:has(#lunchStart2),
+    .input-group:has(#lunchDur),
+    .input-group:has(#totalOps),
+    .input-group:has(#workerCount),
+    .input-group:has(#timeMode),
+    .input-group:has(#orderName),
+    .input-group:has(#resIz),
+    .input-group:has(#coefK) {
+        grid-column: span 1;
+    }
+    .input-group:has(#itemName) {
+        grid-column: span 2;
+    }
+}
+
+@media (max-width: 600px) {
+    .setup-grid {
+        grid-template-columns: 1fr;
+    }
+    /* Single column layout */
+    .setup-grid > .input-group {
+        grid-column: 1 / -1;
+    }
 }
 
 /* Fieldset/legend for mode checkbox */
@@ -248,10 +324,6 @@ input:focus, select:focus {
     color: #92400e; 
 }
 
-.op-duration, .op-break-val { 
-    width: 100px !important; 
-}
-
 /* Disabled селект единиц времени */
 .op-unit:disabled {
     opacity: 0.6;
@@ -332,8 +404,7 @@ input:focus, select:focus {
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
-    padding-top: 0;
-    margin-top: -5px;
+    padding-top: 6px;
 }
 .workers-modal-right {
     flex: 1;
@@ -342,15 +413,17 @@ input:focus, select:focus {
     flex-direction: column;
     justify-content: flex-start;
     padding-top: 0;
-    margin-top: 0px;
 }
-.workers-cheat-container { border-left: 1px solid #eee; padding-left: 18px; }
+.workers-cheat-container {
+    border-left: 1px solid #eee;
+    padding-left: 18px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+}
 .workers-cheat-title { margin-top: 0; font-size: 16px; }
 .workers-cheat-sub { font-size: 12px; color: #666; margin: 0 0 10px 0; }
-.workers-cheat-container { border-left: 1px solid #eee; padding-left: 18px; display:flex; flex-direction:column; justify-content:flex-start; }
-.workers-modal-left { display:flex; flex-direction:column; justify-content:flex-start; padding-top:6px; }
-.workers-cheat-textarea { margin-top: 0; }
-.workers-cheat-textarea { width: 100%; height: 260px; resize: vertical; padding: 10px; box-sizing: border-box; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
+.workers-cheat-textarea { width: 100%; height: 260px; resize: vertical; padding: 10px; box-sizing: border-box; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; margin-top: 0; }
 .workers-actions--compact { margin-top: 12px; display:flex; justify-content:space-between; align-items:center; }
 .workers-actions-left { display:flex; gap:10px; align-items:center; }
 .workers-actions-right { display:flex; gap:10px; align-items:center; }
@@ -403,10 +476,14 @@ input:focus, select:focus {
 }
 
 .op-input-row label.op-label {
-    min-width: 100px;
+    min-width: 0;
     margin: 0;
     font-size: 13px;
     font-weight: 600;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* Number label displayed before operation name */
