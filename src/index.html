@@ -93,7 +93,7 @@
         </div>
         
         <div class="input-group"><label for="orderName">Заказ</label><input type="text" id="orderName" placeholder="Номер заказа" maxlength="12" inputmode="numeric" pattern="[0-9]*" autocomplete="on"></div>
-        <div class="input-group"><label for="itemName">Наименование(Кратко)</label><input type="text" id="itemName" placeholder="Наименование" maxlength="50"></div>
+        <div class="input-group"><label for="itemName">Наименование</label><input type="text" id="itemName" placeholder="Наименование" maxlength="45"></div>
         <div class="input-group"><label for="resIz">Rиз (Мом)</label><input type="text" id="resIz" placeholder="..." maxlength="6" inputmode="numeric" pattern="[0-9]*" autocomplete="off"></div>
         <div class="input-group"><label for="coefK">Коэф. K</label><input type="text" id="coefK" placeholder="..." maxlength="5" inputmode="decimal" pattern="[0-9]+([.,][0-9]{1,2})?" autocomplete="off"></div>
         
@@ -172,7 +172,7 @@
                 <div class="workers-modal-right">
                     <div class="workers-cheat-container">
                         <p class="workers-cheat-sub">Свободное поле для заметок.<br>Текст сохраняется локально.<br>НЕ экспортируется в JSON.</p>
-                        <textarea id="workersCheat" class="workers-cheat-textarea" placeholder="Введите заметки, инструкции, номера..."></textarea>
+                        <textarea id="workersCheat" class="workers-cheat-textarea" placeholder="Введите заметки, инструкции, номера..." maxlength="5000"></textarea>
                     </div>
                 </div>
             </div>

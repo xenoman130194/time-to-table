@@ -285,7 +285,7 @@ input:focus, select:focus {
     border: 1px solid transparent; 
     font-weight: 600; 
     width: 100%;
-    max-width: 550px; 
+    max-width: 300px; 
     padding: 6px; 
     background: transparent; 
     transition: 0.2s; 

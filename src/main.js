@@ -61,6 +61,15 @@ function sanitizeInput(str, maxLength = 500) {
     return str.substring(0, maxLength).trim();
 }
 
+// Строгая санитизация для названий/описаний: допускаем буквы (лат/кириллица), цифры, запятую, точку, символ № и пробел
+function sanitizeStrict(str, maxLength = 500) {
+    if (typeof str !== 'string') return '';
+    // Разрешаем: A-Z a-z, Cyrillic 00-F? (use 00-FF earlier) — use common Cyrillic range \u0400-\u04FF
+    // цифры, запятая, точка, символ №, пробел
+    const cleaned = String(str).replace(/[^A-Za-z\u0400-\u04FF0-9,\.№ ]+/g, '');
+    return cleaned.substring(0, maxLength);
+}
+
 // Returns a hex string of `bytes` random bytes using crypto.getRandomValues when available.
 // Falls back to crypto.randomUUID() (without dashes) or a timestamp+counter hex string —
 // critically: does NOT use Math.random().
@@ -178,7 +187,7 @@ function sanitizeDecimalInput(raw) {
     if (raw === null || raw === undefined) return '';
     let s = String(raw);
     // Оставляем только цифры и разделители . и ,
-    s = s.replace(/[^0-9.,]/g, '');
+    s = s.replaceAll(/[^0-9.,]/g, '');
     // Найдём первый разделитель
     const m = s.match(/[.,]/);
     if (!m) {
@@ -187,8 +196,8 @@ function sanitizeDecimalInput(raw) {
     }
     const sep = m[0];
     const idx = s.indexOf(sep);
-    let intPart = s.slice(0, idx).replace(/[.,]/g, '').slice(0, 5);
-    let fracPart = s.slice(idx + 1).replace(/[.,]/g, '').slice(0, 2);
+    let intPart = s.slice(0, idx).replaceAll(/[.,]/g, '').slice(0, 5);
+    let fracPart = s.slice(idx + 1).replaceAll(/[.,]/g, '').slice(0, 2);
     // Если дробная часть ещё пустая — возвращаем с точкой, чтобы пользователь мог продолжить вводить
     if (fracPart.length === 0) return intPart + '.';
     // Нормализуем разделитель на точку для дальнейшего парсинга
@@ -387,6 +396,39 @@ try {
     }
 } catch (e) {
     console.debug?.('CoefK input listener attach failed:', e?.message);
+}
+
+// Live strict sanitization for several text fields: itemName, statusBefore, workExtra, devRec
+try {
+    const itemEl = document.getElementById('itemName');
+    if (itemEl) {
+        itemEl.addEventListener('input', (e) => {
+            const v = sanitizeStrict(e.target.value || '', 45);
+            e.target.value = v;
+        });
+    }
+
+    const strictFields = ['statusBefore', 'workExtra', 'devRec'];
+    strictFields.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('input', (e) => {
+            const max = Number.parseInt(el.getAttribute('maxlength') || '300', 10) || 300;
+            const v = sanitizeStrict(e.target.value || '', max);
+            e.target.value = v;
+            // update char counter if exists
+            try {
+                const ctr = document.getElementById(id + '_counter');
+                if (ctr) {
+                    const len = String(v).length;
+                    const remaining = Math.max(0, max - len);
+                    ctr.textContent = `осталось ${remaining} / ${max}`;
+                }
+            } catch (ee) {}
+        });
+    });
+} catch (e) {
+    console.debug?.('attach strict sanitizers failed:', e?.message);
 }
 
 // Синхронизация единиц времени: все операции используют единицу первой операции
@@ -692,8 +734,28 @@ function createOperationBlock(index) {
         value: `Операция №${index}`,
         type: 'text',
         placeholder: 'Название операции',
+        maxlength: '200',
         autocomplete: 'off'
     });
+    // Live strict sanitization on input for operation name
+    try {
+        nameInp.addEventListener('input', (e) => {
+            const v = sanitizeStrict(e.target.value || '', 200);
+            e.target.value = v;
+            try {
+                const ctr = document.getElementById(`op_name_${index}_counter`);
+                if (ctr) {
+                    const rem = Math.max(0, 200 - v.length);
+                    ctr.textContent = `осталось ${rem} / 200`;
+                }
+            } catch (ee) {}
+        });
+    } catch (e) {
+        console.debug?.('op name input attach failed:', e?.message);
+    }
+    // Character counter for operation name
+    const nameCtrText = Math.max(0, 200 - String(nameInp.value || '').length);
+    const nameCounter = createEl('div', { className: 'char-counter', id: `op_name_${index}_counter` }, `осталось ${nameCtrText} / 200`);
     
     const controls = createEl('div', { className: 'op-controls' });
     
@@ -708,6 +770,8 @@ function createOperationBlock(index) {
         inputmode: 'decimal',
         pattern: '\\d{0,5}([.,]\\d{1,2})?',
         maxlength: '8',
+        size: '6',
+        style: 'width:8ch',
         value: '10',
         autocomplete: 'off'
     });
@@ -759,6 +823,8 @@ function createOperationBlock(index) {
         inputmode: 'decimal',
         pattern: '\\d{0,5}([.,]\\d{1,2})?',
         maxlength: '8',
+        size: '6',
+        style: 'width:8ch',
         value: '0',
         autocomplete: 'off'
     });
@@ -794,7 +860,7 @@ function createOperationBlock(index) {
         name: `op_pause_${index}`,
         style: 'margin:0;'
     });
-    toggleDiv.append(chk, createEl('label', { htmlFor: `op_pause_${index}`, style: 'margin-left:4px; cursor:pointer;' }, 'Пауза перед началом'));
+    toggleDiv.append(chk, createEl('label', { htmlFor: `op_pause_${index}`, style: 'margin-left:4px; cursor:pointer;' }, 'Пауза'));
     
     // Скрыть паузу для всех блоков кроме первого
     if (index !== 1) {
@@ -823,7 +889,7 @@ function createOperationBlock(index) {
     });
     
     controls.append(toggleDiv, breakGroup, workGroup);
-    block.append(numLabel, nameInp, controls);
+    block.append(numLabel, nameInp, nameCounter, controls);
     container.append(block);
     updateBreakVis();
     
@@ -946,7 +1012,7 @@ async function generateTable() {
     const fmtDate = (date) => date.toLocaleDateString('ru');
 
     ops.forEach((block, opIndex) => {
-        const name = sanitizeInput(block.querySelector('.op-header-input').value, 200);
+        const name = sanitizeStrict(block.querySelector('.op-header-input').value, 200);
         operationNames.push(name);
         const dur = Math.max(0, Number.parseFloat(block.querySelector('.op-duration').value) || 0);
         let unit = block.querySelector('.op-unit').value;
@@ -1090,11 +1156,11 @@ async function generateTable() {
 
     tableResult.append(tblOps.wrapper, tblDur.wrapper, tblTime.wrapper);
 
-    const statusText = sanitizeInput(document.getElementById('statusBefore').value, 300) || "замечаний нет";
-    const extraWorks = sanitizeInput(document.getElementById('workExtra').value, 300) || "нет";
-    const devRec = sanitizeInput(document.getElementById('devRec').value, 300) || "нет";
-    const rizVal = sanitizeInput(document.getElementById('resIz').value, 100) || "";
-    const kVal = sanitizeInput(document.getElementById('coefK').value, 100) || "";
+    const statusText = sanitizeStrict(document.getElementById('statusBefore').value, 300) || "замечаний нет";
+    const extraWorks = sanitizeStrict(document.getElementById('workExtra').value, 300) || "нет";
+    const devRec = sanitizeStrict(document.getElementById('devRec').value, 300) || "нет";
+    const rizVal = sanitizeInput(document.getElementById('resIz').value, 6) || "";
+    const kVal = sanitizeInput(document.getElementById('coefK').value, 5) || "";
         const kValForZ7 = kVal.replace(',', '.');
     const worksText = operationNames.join(', ');
     const rizDisplay = rizVal ? `${rizVal} МОм` : "";
@@ -1127,8 +1193,8 @@ async function generateTable() {
 
     const select = document.getElementById('techCardSelect');
     const cardNameBase = select.value === 'manual' ? 'Ручной ввод' : select.options[select.selectedIndex].text;
-    const orderInput = sanitizeInput(document.getElementById('orderName')?.value || '', 200);
-    const nameInput = sanitizeInput(document.getElementById('itemName')?.value || '', 15);
+    const orderInput = sanitizeInput(document.getElementById('orderName')?.value || '', 12);
+    const nameInput = sanitizeStrict(document.getElementById('itemName')?.value || '', 45);
     const cardName = (orderInput ? (orderInput + ' ') : '') + (nameInput ? nameInput : cardNameBase);
     
     const lunchConfig = { h: lh, m: lm, h2: lh2, m2: lm2, dur: lunchDurMin };
@@ -1693,7 +1759,7 @@ async function downloadExcelFile(xmlContent) {
 // === УПРАВЛЕНИЕ ТЕХКАРТАМИ ===
 function getCardData() {
     return Array.from(document.querySelectorAll('.op-block')).map(b => ({
-        name: sanitizeInput(b.querySelector('.op-header-input').value, 200),
+        name: sanitizeStrict(b.querySelector('.op-header-input').value, 200),
         dur: Math.max(0, Number.parseFloat(b.querySelector('.op-duration').value) || 0),
         unit: b.querySelector('.op-unit').value,
         hasBreak: b.querySelector('.order-pause-toggle').checked,
@@ -1721,7 +1787,15 @@ function setCardData(steps) {
     
     steps.forEach((s, i) => {
         if (!blocks[i]) return;
-        blocks[i].querySelector('.op-header-input').value = sanitizeInput(s.name, 200);
+        blocks[i].querySelector('.op-header-input').value = sanitizeStrict(s.name, 200);
+        try {
+            const ctr = blocks[i].querySelector(`#op_name_${i+1}_counter`);
+            if (ctr) {
+                const val = blocks[i].querySelector('.op-header-input').value || '';
+                const rem = Math.max(0, 200 - String(val).length);
+                ctr.textContent = `осталось ${rem} / 200`;
+            }
+        } catch (ee) {}
         blocks[i].querySelector('.op-duration').value = Math.max(0, Number.parseFloat(s.dur) || 0);
         // Для всех операций кроме первой единица будет синхронизирована
         if (i === 0) {
@@ -1760,7 +1834,7 @@ const totalOpsEl = document.getElementById('totalOps');
 if (totalOpsEl) {
     // While typing: keep only digits and clamp to max immediately
     totalOpsEl.addEventListener('input', (e) => {
-        let v = String(e.target.value).replace(/[^0-9]/g, '');
+    let v = String(e.target.value).replaceAll(/[^0-9]/g, '');
         if (v !== '') {
             const n = Number.parseInt(v, 10);
             if (!Number.isNaN(n)) {
@@ -1775,7 +1849,7 @@ if (totalOpsEl) {
     totalOpsEl.addEventListener('paste', (e) => {
         e.preventDefault();
         const text = (e.clipboardData || window.clipboardData).getData('text') || '';
-        const digits = text.replace(/[^0-9]/g, '');
+        const digits = text.replaceAll(/[^0-9]/g, '');
         const n = Number.parseInt(digits || '0', 10) || 0;
         const clamped = validateNumber(n, 1, 20);
         totalOpsEl.value = clamped;
@@ -2356,7 +2430,7 @@ function getWorkerLabel(index) {
     if (workerIds[index - 1] && workerIds[index - 1].trim()) {
         // Ensure only digits are returned; pad to 8 if partially entered
         const raw = String(workerIds[index - 1]).trim();
-        const digits = raw.replace(/[^0-9]/g, '');
+        const digits = raw.replaceAll(/[^0-9]/g, '');
         if (digits.length === 0) return String(index);
         return digits.length >= 8 ? digits : digits.padStart(8, '0');
     }
@@ -2484,7 +2558,7 @@ const workerCountEl = document.getElementById('workerCount');
 if (workerCountEl) {
     // While typing: keep only digits and clamp to max immediately
     workerCountEl.addEventListener('input', (e) => {
-        let v = String(e.target.value).replace(/[^0-9]/g, '');
+        let v = String(e.target.value).replaceAll(/[^0-9]/g, '');
         if (v !== '') {
             const n = Number.parseInt(v, 10);
             if (!Number.isNaN(n)) {
@@ -2499,7 +2573,7 @@ if (workerCountEl) {
     workerCountEl.addEventListener('paste', (e) => {
         e.preventDefault();
         const text = (e.clipboardData || window.clipboardData).getData('text') || '';
-        const digits = text.replace(/[^0-9]/g, '');
+        const digits = text.replaceAll(/[^0-9]/g, '');
         const n = Number.parseInt(digits || '0', 10) || 0;
         const clamped = validateNumber(n, 1, 10);
         workerCountEl.value = clamped;
