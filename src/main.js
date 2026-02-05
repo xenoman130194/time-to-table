@@ -66,7 +66,7 @@ function sanitizeStrict(str, maxLength = 500) {
     if (typeof str !== 'string') return '';
     // Разрешаем: A-Z a-z, Cyrillic 00-F? (use 00-FF earlier) — use common Cyrillic range \u0400-\u04FF
     // цифры, запятая, точка, символ №, пробел
-    const cleaned = String(str).replaceAll(/[^A-Za-z\u0400-\u04FF0-9,\.№ ]+/g, '');
+    const cleaned = String(str).replaceAll(/[^A-Za-z\u0400-\u04FF0-9,.№ ]+/g, '');
     return cleaned.substring(0, maxLength);
 }
 
@@ -556,7 +556,7 @@ function restoreHistoryFromStorage() {
                     else if (restoreUniqueUnits[0] === 'hour') restoreHeaderUnit = " (час)";
                 }
                 
-                ['№ ПДТВ', 'Операция', 'Обед?', 'Перерыв', `ФактРабота${restoreHeaderUnit}`, 'Дата проводки', 'Исполнитель', 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
+                ['№ ПДТВ', 'Операция', 'Обед?', 'Пауза', `ФактРабота${restoreHeaderUnit}`, 'Дата проводки', 'Исполнитель', 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
                     trHead.append(createEl('th', {}, text));
                 });
                 thead.append(trHead);
@@ -1122,7 +1122,7 @@ async function generateTable() {
         return { wrapper, tbody };
     };
 
-    const tblOps = createSubTable(['№ ПДТВ', 'Операция', 'Обед?', 'Перерыв'], 2);
+    const tblOps = createSubTable(['№ ПДТВ', 'Операция', 'Обед?', 'Пауза'], 2);
     
     // Определяем единицу измерения для заголовка ФактРабота
     let headerUnit = "";
@@ -1275,7 +1275,7 @@ async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isCh
             else if (histUniqueUnits[0] === 'hour') histHeaderUnit = " (час)";
         }
         
-        ['№ ПДТВ', 'Операция', 'Обед?', 'Перерыв', `ФактРабота${histHeaderUnit}`, 'Дата проводки', 'Исполнитель', '-', 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
+        ['№ ПДТВ', 'Операция', 'Обед?', 'Пауза', `ФактРабота${histHeaderUnit}`, 'Дата проводки', 'Исполнитель', '-', 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
             trHead.append(createEl('th', {}, text));
         });
         thead.append(trHead);
@@ -1405,6 +1405,15 @@ async function exportToExcel() {
     }
 
     let xmlBody = '';
+    // Вставляем строку авторства в самый верх и пустую строку после неё
+    xmlBody += `
+    <Row ss:Height="50" ss:AutoFitHeight="0">
+        <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sAuthor"><Data ss:Type="String">${escapeXml('Создано при помощи калькулятора для ленивых. Ленивым от ленивого. 🙂')}</Data></Cell>
+    </Row>
+    <Row>
+        <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sTextLocked"><Data ss:Type="String"></Data></Cell>
+    </Row>
+    `;
     let previousEntryData = null;
     const entriesArray = Array.from(entries).reverse();
 
@@ -1438,7 +1447,7 @@ async function exportToExcel() {
             <Cell ss:Index="2" ss:StyleID="sHeader"><Data ss:Type="String">№ ПДТВ</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Операция</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Обед?</Data></Cell>
-            <Cell ss:StyleID="sHeader"><Data ss:Type="String">Перерыв</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">Пауза перед началом операции</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">ФактРабота${headerUnit}</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Дата проводки</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Исполнитель</Data></Cell>
@@ -1537,7 +1546,7 @@ async function exportToExcel() {
                     // Но если результат попадает в обед - сдвигаем на конец обеда.
                     const l1ValStart = `TIME(${lh},${lm},0)`;
                     const l1EndStart = `(TIME(${lh},${lm},0)+TIME(0,${ld},0))`;
-                    // RC[-6] = пауза текущей строки (столбец E, Перерыв)
+                    // RC[-6] = пауза текущей строки (столбец E, Пауза)
                     const rawTimeWithPause = `(R[-1]C[2]+RC[-6])`;
                     // Условие: (prevEnd + pause) >= lunchStart AND (prevEnd + pause) < lunchEnd => сдвиг на lunchEnd
                     const startShiftCond1 = `AND(${rawTimeWithPause}>=${l1ValStart}, ${rawTimeWithPause}<${l1EndStart})`;
@@ -1610,15 +1619,27 @@ async function exportToExcel() {
                 formulaEnd = `=MOD(${rawEnd} + ${enShift1}, 1)`;
             }
 
+            // Determine numericness for opIdx and worker to avoid Excel 'number stored as text' warnings
+            const opIdxNum = Number(String(r.opIdx).replaceAll("'", ""));
+            const opIdxCell = Number.isFinite(opIdxNum) && String(opIdxNum) !== 'NaN'
+                ? `<Cell ss:Index="2" ss:StyleID="sBorderLocked"><Data ss:Type="Number">${opIdxNum}</Data></Cell>`
+                : `<Cell ss:Index="2" ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(String(r.opIdx))}</Data></Cell>`;
+
+            const workerRaw = String(r.worker || '');
+            const workerNum = Number(workerRaw.replaceAll("'", ""));
+            const workerCell = (workerRaw.trim() !== '' && Number.isFinite(workerNum))
+                ? `<Cell ss:StyleID="sBorderLocked"><Data ss:Type="Number">${workerNum}</Data></Cell>`
+                : `<Cell ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(workerRaw))}</Data></Cell>`;
+
             xmlBody += `
             <Row>
-                <Cell ss:Index="2" ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(String(r.opIdx))}</Data></Cell>
+                ${opIdxCell}
                 <Cell ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(r.name))}</Data></Cell>
                 <Cell ss:StyleID="sIconLocked" ss:Formula="${escapeXml(formulaIcon)}"><Data ss:Type="String">${r.crossedLunch ? '🍽️' : ''}</Data></Cell>
                 ${pauseCell}
                 ${durCell}
                 <Cell ss:StyleID="sDateLocked"><Data ss:Type="DateTime">${postingXml}</Data></Cell>
-                <Cell ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(String(r.worker)))}</Data></Cell>
+                ${workerCell}
                 <Cell ss:StyleID="sBorderLocked"><Data ss:Type="String"></Data></Cell>
                 <Cell ss:StyleID="sDateLocked"><Data ss:Type="DateTime">${startXml}</Data></Cell>
                 ${startTimeCell}
@@ -1635,38 +1656,38 @@ async function exportToExcel() {
         `;
 
         data.z7.forEach((line, zi) => {
-            // For the "выполненные работы" row (index 1) force a taller row
-            // so it can contain ~3 lines of wrapped text in the exported XML.
-            if (zi === 1) {
-                xmlBody += `
-            <Row ss:Height="48" ss:AutoFitHeight="0">
-                <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(line))}</Data></Cell>
-            </Row>
-            <Row>
-                <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String"></Data></Cell>
-            </Row>
-            `;
-            } else {
-                xmlBody += `
-            <Row>
-                <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(line))}</Data></Cell>
-            </Row>
-            <Row>
-                <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String"></Data></Cell>
-            </Row>
-            `;
+            // Excel cannot auto-fit height for merged cells reliably,
+            // so estimate row height from text length and set ss:Height for Z7 rows.
+            const sanitizedZ7 = excelSanitizeCell(line);
+            const charsPerLine = 80; // rough approximation for wrapping
+            const linesNeeded = Math.max(1, Math.ceil(String(sanitizedZ7).length / charsPerLine));
+            let heightAttr = '';
+            if (linesNeeded > 1) {
+                const perLinePx = 18; // approx pixel height per text line
+                const h = Math.min(400, perLinePx * linesNeeded);
+                heightAttr = ` ss:Height="${h}"`;
             }
+
+            xmlBody += `
+            <Row${heightAttr}>
+                <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(sanitizedZ7)}</Data></Cell>
+            </Row>
+            <Row>
+                <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String"></Data></Cell>
+            </Row>
+            `;
         });
 
         xmlBody += `<Row></Row>`;
         previousEntryData = data;
     });
 
-    const xmlContent = buildExcelXml(xmlBody);
+    const sheetName = new Date().toLocaleDateString('ru-RU').replaceAll('.', '-');
+    const xmlContent = buildExcelXml(xmlBody, sheetName);
     downloadExcelFile(xmlContent);
 }
 
-function buildExcelXml(xmlBody) {
+function buildExcelXml(xmlBody, sheetName) {
     return `<?xml version="1.0" encoding="UTF-8"?>
 <?mso-application progid="Excel.Sheet"?>
 <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
@@ -1674,73 +1695,85 @@ function buildExcelXml(xmlBody) {
  xmlns:x="urn:schemas-microsoft-com:office:excel"
  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
  <Styles>
-  <Style ss:ID="Default" ss:Name="Normal">
-   <Alignment ss:Vertical="Center"/>
-   <Borders/>
-   <Font ss:FontName="Arial"/>
-   <Interior/>
-   <Protection ss:Protected="1"/>
-  </Style>
-  <Style ss:ID="sHeader">
-   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+    <Style ss:ID="Default" ss:Name="Normal">
+     <Alignment ss:Vertical="Center"/>
+     <Borders/>
+     <Font ss:FontName="Arial" ss:Size="12"/>
+     <Interior/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sHeader">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
    <Borders>
     <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
     <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
     <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
     <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
    </Borders>
-   <Font ss:Color="#FFFFFF" ss:Bold="1"/>
+    <Font ss:Color="#FFFFFF" ss:Bold="1" ss:Size="12"/>
    <Interior ss:Color="#374151" ss:Pattern="Solid"/>
    <Protection ss:Protected="1"/>
   </Style>
-  <Style ss:ID="sTitle">
-   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+    <Style ss:ID="sAuthor">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+     <Font ss:Size="30" ss:Bold="1"/>
+     <Interior ss:Color="#b7eeb9" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sTitle">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
    <Borders>
     <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
     <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
     <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
     <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
    </Borders>
-   <Font ss:Color="#FFFFFF" ss:Bold="1"/>
+    <Font ss:Color="#FFFFFF" ss:Bold="1" ss:Size="12"/>
    <Interior ss:Color="#374151" ss:Pattern="Solid"/>
    <Protection ss:Protected="1"/>
   </Style>
-  <Style ss:ID="sTextLocked">
-   <Alignment ss:Vertical="Center"/>
-   <Protection ss:Protected="1"/>
-  </Style>
-  <Style ss:ID="sBorderLocked">
-   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
-   <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
-   <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
-   <Protection ss:Protected="1"/>
-  </Style>
-  <Style ss:ID="sBorderLeftLocked">
-   <Alignment ss:Horizontal="Left" ss:Vertical="Center" ss:WrapText="1"/>
-   <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
-   <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
-   <Protection ss:Protected="1"/>
-  </Style>
-  <Style ss:ID="sDurLocked">
-   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
-   <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
-   <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
-   <Protection ss:Protected="1"/>
-  </Style>
-  <Style ss:ID="sTimeLocked">
-   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
-   <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
-   <NumberFormat ss:Format="h:mm:ss"/>
-   <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
-   <Protection ss:Protected="1"/>
-  </Style>
-  <Style ss:ID="sDateLocked">
-   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
-   <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
-   <NumberFormat ss:Format="dd.mm.yyyy"/>
-   <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
-   <Protection ss:Protected="1"/>
-  </Style>
+    <Style ss:ID="sTextLocked">
+     <Alignment ss:Vertical="Center" ss:WrapText="1"/>
+     <Font ss:Size="12"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sBorderLocked">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="12"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sBorderLeftLocked">
+     <Alignment ss:Horizontal="Left" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="12"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sDurLocked">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="12"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sTimeLocked">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="12"/>
+     <NumberFormat ss:Format="h:mm:ss"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sDateLocked">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="12"/>
+     <NumberFormat ss:Format="dd.mm.yyyy"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
   <Style ss:ID="sIconLocked">
    <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
    <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
@@ -1748,37 +1781,40 @@ function buildExcelXml(xmlBody) {
    <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
    <Protection ss:Protected="1"/>
   </Style>
-  <Style ss:ID="sDurEditable">
-   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
-   <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
-   <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>
-   <Protection ss:Protected="0"/>
-  </Style>
-  <Style ss:ID="sTimeEditable">
-   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
-   <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
-   <NumberFormat ss:Format="h:mm:ss"/>
-   <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>
-   <Protection ss:Protected="0"/>
-  </Style>
+    <Style ss:ID="sDurEditable">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="12"/>
+     <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>
+     <Protection ss:Protected="0"/>
+    </Style>
+    <Style ss:ID="sTimeEditable">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="12"/>
+     <NumberFormat ss:Format="h:mm:ss"/>
+     <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>
+     <Protection ss:Protected="0"/>
+    </Style>
  </Styles>
- <Worksheet ss:Name="Sheet1" ss:Protected="1" x:Password="">
-  <Table>
-   <Column ss:Width="20" ss:StyleID="sTextLocked"/> <!-- Margin -->
+ <Worksheet ss:Name="${escapeXml(sheetName)}" ss:Protected="1" x:Password="">
+    <Table>
+    <Column ss:Width="40" ss:StyleID="sTextLocked"/> <!-- Margin (Column A) -->
     <Column ss:Width="90" ss:StyleID="sTextLocked"/> <!-- № ( widened to fit 8-digit numbers ) -->
-    <Column ss:Width="200" ss:StyleID="sTextLocked"/> <!-- Operation -->
+    <Column ss:Width="300" ss:StyleID="sTextLocked"/> <!-- Operation -->
     <Column ss:Width="50" ss:StyleID="sTextLocked"/> <!-- Lunch? -->
     <Column ss:Width="70" ss:StyleID="sTextLocked"/> <!-- Pause (New) -->
-    <Column ss:Width="130" ss:StyleID="sTextLocked"/> <!-- Duration -->
-    <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- Posting D -->
-    <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- Worker -->
-    <Column ss:Width="140" ss:StyleID="sTextLocked"/> <!-- - (empty) -->
-    <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- Start D -->
-    <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- Start T -->
-    <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- End D -->
-    <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- End T -->
-   ${xmlBody}
-  </Table>
+    <Column ss:Width="140" ss:StyleID="sTextLocked"/> <!-- Duration -->
+    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- Posting D -->
+    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- Worker -->
+    <Column ss:Width="50" ss:StyleID="sTextLocked"/> <!-- - (empty) -->
+    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- Start D -->
+    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- Start T -->
+    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- End D -->
+    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- End T -->
+    <Column ss:Width="40" ss:StyleID="sTextLocked"/> <!-- Column N (extra) -->
+     ${xmlBody}
+    </Table>
   <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
    <FitToPage/>
    <Print>
