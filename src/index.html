@@ -94,7 +94,7 @@
         </div>
         
         <div class="input-group"><label for="orderName">Заказ</label><input type="text" id="orderName" placeholder="Номер заказа" maxlength="12" inputmode="numeric" pattern="[0-9]*" autocomplete="on"></div>
-        <div class="input-group"><label for="itemName">Наименование</label><input type="text" id="itemName" placeholder="Наименование" maxlength="45"></div>
+        <div class="input-group"><label for="itemName">Наименование</label><input type="text" id="itemName" placeholder="Наименование" maxlength="70"></div>
         <div class="input-group"><label for="resIz">Rиз (Мом)</label><input type="text" id="resIz" placeholder="..." maxlength="6" inputmode="numeric" pattern="[0-9]*" autocomplete="off"></div>
         <div class="input-group"><label for="coefK">Коэф. K</label><input type="text" id="coefK" placeholder="..." maxlength="5" inputmode="decimal" pattern="[0-9]+([.,][0-9]{1,2})?" autocomplete="off"></div>
         
@@ -147,7 +147,7 @@
             <button class="modal-close" id="closeOpsModal">&times;</button>
         </div>
         <div class="modal-body" id="opsModalBody">
-            <p class="workers-hint">Введите 8-значный номер подтверждения для первой операции.<br>Номера подтверждений последующих операций рассчитываются автоматически (+1).<br>Галочка "ПОСЛЕДНЯЯ" означает, что операции будет присвоен последний порядковый номер.<br>НО, это не будет учитываться в расчетах. Операции будут расчитываться последовательно.<br>Удобно при наличии ОДНОЙ подоперации в заказе.</p>
+            <p class="workers-hint">Введите 8-значный номер подтверждения для первой операции.<br>Номера подтверждений последующих операций рассчитываются автоматически (+1).<br>Галочка "ПОСЛЕДНЯЯ" означает, что операции будет присвоен последний порядковый номер.<br>НО, это не будет учитываться в расчетах. Операции будут расчитываться последовательно(тех. долг).<br>Удобно при наличии ОДНОЙ подоперации в заказе.</p>
             <div id="opsInputList"></div>
             <div class="workers-actions">
                 <button class="btn-sm btn-save" id="saveOpsBtn">Сохранить</button>

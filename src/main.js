@@ -70,6 +70,12 @@ function sanitizeStrict(str, maxLength = 500) {
     return cleaned.substring(0, maxLength);
 }
 
+// Удаляет ведущий порядковый префикс вида "1) ", "2) " и т.п.
+function stripOrdinalPrefix(str) {
+    if (typeof str !== 'string') return '';
+    return str.replace(/^\s*\d+\)\s*/, '');
+}
+
 // Returns a hex string of `bytes` random bytes using crypto.getRandomValues when available.
 // Falls back to crypto.randomUUID() (without dashes) or a timestamp+counter hex string —
 // critically: does NOT use Math.random().
@@ -405,7 +411,7 @@ try {
     const itemEl = document.getElementById('itemName');
     if (itemEl) {
         itemEl.addEventListener('input', (e) => {
-            const v = sanitizeStrict(e.target.value || '', 45);
+            const v = sanitizeStrict(e.target.value || '', 70);
             e.target.value = v;
         });
     }
@@ -721,7 +727,7 @@ function renderFields() {
     } catch (e) {
         console.debug?.('renderFields modal update error:', e?.message);
     }
-    try { updateMainOperationLabels(); } catch (e) { /* ignore */ }
+    try { updateMainOperationLabels(); updateOperationInputPrefixes(); } catch (e) { /* ignore */ }
 }
 
 function createOperationBlock(index) {
@@ -731,34 +737,72 @@ function createOperationBlock(index) {
     const opNumText = (typeof getOperationLabel === 'function') ? getOperationLabel(index, totalOpsCurrent) : String(index);
     const numLabel = createEl('div', { className: 'op-num-label' }, opNumText);
 
+    const prefix = `${index}) `;
     const nameInp = createEl('input', {
         className: 'op-header-input',
         name: `op_name_${index}`,
-        value: `Операция №${index}`,
+        value: `${prefix}Операция №${index}`,
         type: 'text',
         placeholder: 'Название операции',
         maxlength: '200',
         autocomplete: 'off'
     });
-    // Live strict sanitization on input for operation name
+    // Make the numeric prefix immutable: keep it at start, sanitize only the suffix
     try {
-        nameInp.addEventListener('input', (e) => {
-            const v = sanitizeStrict(e.target.value || '', 200);
-            e.target.value = v;
-            try {
-                const ctr = document.getElementById(`op_name_${index}_counter`);
-                if (ctr) {
-                    const rem = Math.max(0, 200 - v.length);
-                    ctr.textContent = `осталось ${rem} / 200`;
-                }
-            } catch (ee) {}
+        const handleInput = (e) => {
+            const el = e.target;
+            let v = el.value || '';
+            // remove any leading numeric prefix user might paste/type
+            v = v.replace(/^\s*\d+\)\s*/, '');
+            // sanitize only the meaningful part
+            v = sanitizeStrict(v, 200);
+            el.value = prefix + v;
+            // keep caret after prefix
+            const pos = Math.max(prefix.length, (el.selectionStart || 0));
+            try { el.setSelectionRange(pos, pos); } catch (ee) {}
+        };
+
+        nameInp.addEventListener('input', handleInput);
+        nameInp.addEventListener('focus', (e) => {
+            const el = e.target;
+            if ((el.selectionStart || 0) < prefix.length) {
+                try { el.setSelectionRange(prefix.length, prefix.length); } catch (ee) {}
+            }
+        });
+
+        nameInp.addEventListener('keydown', (e) => {
+            const el = e.target;
+            const selStart = el.selectionStart || 0;
+            const selEnd = el.selectionEnd || 0;
+            // prevent deleting or selecting the prefix
+            if ((e.key === 'Backspace' || e.key === 'Delete') && selEnd <= prefix.length) {
+                e.preventDefault();
+            }
+            // prevent selection that includes prefix and replacing it with typing
+            if (e.key.length === 1 && selStart < prefix.length && selEnd <= prefix.length) {
+                // place cursor after prefix before inserting
+                try { el.setSelectionRange(prefix.length, prefix.length); } catch (ee) {}
+            }
+        });
+
+        nameInp.addEventListener('paste', (e) => {
+            e.preventDefault();
+            const paste = (e.clipboardData || window.clipboardData).getData('text') || '';
+            const sanitized = sanitizeStrict(paste, 200);
+            const el = e.target;
+            const cur = el.value || '';
+            const insertPos = Math.max(prefix.length, el.selectionStart || prefix.length);
+            const before = cur.slice(prefix.length, insertPos);
+            const after = cur.slice(insertPos);
+            const newBody = (before + sanitized + after).slice(0, 200);
+            el.value = prefix + sanitizeStrict(newBody, 200);
+            const pos = prefix.length + Math.min(newBody.length, 200);
+            try { el.setSelectionRange(pos, pos); } catch (ee) {}
         });
     } catch (e) {
         console.debug?.('op name input attach failed:', e?.message);
     }
-    // Character counter for operation name
-    const nameCtrText = Math.max(0, 200 - String(nameInp.value || '').length);
-    const nameCounter = createEl('div', { className: 'char-counter', id: `op_name_${index}_counter` }, `осталось ${nameCtrText} / 200`);
+    
     
     const controls = createEl('div', { className: 'op-controls' });
     
@@ -892,7 +936,7 @@ function createOperationBlock(index) {
     });
     
     controls.append(toggleDiv, breakGroup, workGroup);
-    block.append(numLabel, nameInp, nameCounter, controls);
+    block.append(numLabel, nameInp, controls);
     container.append(block);
     updateBreakVis();
     
@@ -1016,7 +1060,9 @@ async function generateTable() {
     const fmtDate = (date) => date.toLocaleDateString('ru');
 
     ops.forEach((block, opIndex) => {
-        const name = sanitizeStrict(block.querySelector('.op-header-input').value, 200);
+        // Удаляем возможный префикс вида "N) " перед санитаризацией
+        const rawOpName = block.querySelector('.op-header-input').value || '';
+        const name = sanitizeStrict(stripOrdinalPrefix(rawOpName), 200);
         operationNames.push(name);
         const dur = Math.max(0, Number.parseFloat(block.querySelector('.op-duration').value) || 0);
         let unit = block.querySelector('.op-unit').value;
@@ -1209,7 +1255,7 @@ async function generateTable() {
     const select = document.getElementById('techCardSelect');
     const cardNameBase = select.value === 'manual' ? 'Ручной ввод' : select.options[select.selectedIndex].text;
     const orderInput = sanitizeInput(document.getElementById('orderName')?.value || '', 12);
-    const nameInput = sanitizeStrict(document.getElementById('itemName')?.value || '', 45);
+    const nameInput = sanitizeStrict(document.getElementById('itemName')?.value || '', 70);
     const cardName = (orderInput ? (orderInput + ' ') : '') + (nameInput ? nameInput : cardNameBase);
     
     const lunchConfig = { h: lh, m: lm, h2: lh2, m2: lm2, dur: lunchDurMin };
@@ -1884,7 +1930,8 @@ async function downloadExcelFile(xmlContent) {
 // === УПРАВЛЕНИЕ ТЕХКАРТАМИ ===
 function getCardData() {
     return Array.from(document.querySelectorAll('.op-block')).map(b => ({
-        name: sanitizeStrict(b.querySelector('.op-header-input').value, 200),
+        // Сохраняем имя операции без порядкового префикса
+        name: sanitizeStrict(stripOrdinalPrefix(b.querySelector('.op-header-input').value), 200),
         dur: Math.max(0, Number.parseFloat(b.querySelector('.op-duration').value) || 0),
         unit: b.querySelector('.op-unit').value,
         hasBreak: b.querySelector('.order-pause-toggle').checked,
@@ -1912,15 +1959,9 @@ function setCardData(steps) {
     
     steps.forEach((s, i) => {
         if (!blocks[i]) return;
-        blocks[i].querySelector('.op-header-input').value = sanitizeStrict(s.name, 200);
-        try {
-            const ctr = blocks[i].querySelector(`#op_name_${i+1}_counter`);
-            if (ctr) {
-                const val = blocks[i].querySelector('.op-header-input').value || '';
-                const rem = Math.max(0, 200 - String(val).length);
-                ctr.textContent = `осталось ${rem} / 200`;
-            }
-        } catch (ee) {}
+        // Для отображения в UI добавляем порядковый префикс, но сохраняем внутри шаблона только имя
+        blocks[i].querySelector('.op-header-input').value = `${i + 1}) ${sanitizeStrict(s.name, 200)}`;
+        
         blocks[i].querySelector('.op-duration').value = Math.max(0, Number.parseFloat(s.dur) || 0);
         // Для всех операций кроме первой единица будет синхронизирована
         if (i === 0) {
@@ -2354,6 +2395,19 @@ function updateMainOperationLabels() {
     });
 }
 
+// Обновляет префиксы в полях ввода операций (например после изменения количества)
+function updateOperationInputPrefixes() {
+    const blocks = document.querySelectorAll('.op-block');
+    if (!blocks) return;
+    blocks.forEach((blk, i) => {
+        const inp = blk.querySelector('.op-header-input');
+        if (!inp) return;
+        const prefix = `${i + 1}) `;
+        const body = stripOrdinalPrefix(inp.value || '');
+        inp.value = prefix + sanitizeStrict(body, 200);
+    });
+}
+
 function renderOpsInputList() {
     const container = document.getElementById('opsInputList');
     const count = Number.parseInt(document.getElementById('totalOps').value, 10) || 1;
@@ -2370,6 +2424,7 @@ function renderOpsInputList() {
         if (opBlocks[i - 1]) {
             const nameInput = opBlocks[i - 1].querySelector('.op-header-input');
             if (nameInput && nameInput.value.trim()) {
+                // Показываем полное значение поля, включая префикс (например "1) ...")
                 opName = nameInput.value.trim();
             }
         }

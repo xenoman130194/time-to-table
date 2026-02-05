@@ -17,12 +17,17 @@ body {
 .card > .header-row > h2 {
     margin: 0;
     color: #1f2937;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1.25rem;
 }
 
 .card > .header-row > h2 > span {
-    font-size: 0.6em;
+    font-size: 0.8em;
     color: #10b981;
-    font-weight: normal;
+    font-weight: 600;
+    opacity: 0.95;
 }
 
 /* Кнопки - цветовые модификаторы через ID */
@@ -659,6 +664,10 @@ tr:nth-child(even) {
 .btn-group-row { 
     display: flex; 
     gap: 8px; 
+}
+
+.btn-group-row {
+    align-items: center;
 }
 
 .history-section { 
