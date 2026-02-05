@@ -66,7 +66,7 @@ function sanitizeStrict(str, maxLength = 500) {
     if (typeof str !== 'string') return '';
     // Разрешаем: A-Z a-z, Cyrillic 00-F? (use 00-FF earlier) — use common Cyrillic range \u0400-\u04FF
     // цифры, запятая, точка, символ №, пробел
-    const cleaned = String(str).replace(/[^A-Za-z\u0400-\u04FF0-9,\.№ ]+/g, '');
+    const cleaned = String(str).replaceAll(/[^A-Za-z\u0400-\u04FF0-9,\.№ ]+/g, '');
     return cleaned.substring(0, maxLength);
 }
 
@@ -285,12 +285,14 @@ function formatDurationToTime(val, unit) {
 
 // === ИНИЦИАЛИЗАЦИЯ ===
 const startDateInput = document.getElementById('startDate');
+const postingDateInput = document.getElementById('postingDate');
 // Устанавливаем текущую локальную дату (без проблем с UTC)
 const today = new Date();
 const yyyy = today.getFullYear();
 const mm = String(today.getMonth() + 1).padStart(2, '0');
 const dd = String(today.getDate()).padStart(2, '0');
 startDateInput.value = `${yyyy}-${mm}-${dd}`;
+if (postingDateInput) postingDateInput.value = `${yyyy}-${mm}-${dd}`;
 
 const startTimeInput = document.getElementById('startTime');
 const container = document.getElementById('fieldsContainer');
@@ -554,7 +556,7 @@ function restoreHistoryFromStorage() {
                     else if (restoreUniqueUnits[0] === 'hour') restoreHeaderUnit = " (час)";
                 }
                 
-                ['№ ПДТВ', 'Операция', 'Исполнитель', 'Обед?', 'Перерыв', `Длительность${restoreHeaderUnit}`, 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
+                ['№ ПДТВ', 'Операция', 'Обед?', 'Перерыв', `ФактРабота${restoreHeaderUnit}`, 'Дата проводки', 'Исполнитель', 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
                     trHead.append(createEl('th', {}, text));
                 });
                 thead.append(trHead);
@@ -565,10 +567,11 @@ function restoreHistoryFromStorage() {
                     tr.append(
                         createEl('td', {}, r.opIdx),
                         createEl('td', { style: 'text-align:left;' }, r.name),
-                        createEl('td', {}, r.worker),
                         createEl('td', {}, r.crossedLunch ? '🍽️' : ''),
                         createEl('td', { style: 'color: #555;' }, r.pauseText || ''),
                         createEl('td', {}, r.durText),
+                        createEl('td', {}, r.postingDate || ''),
+                        createEl('td', {}, r.worker),
                         createEl('td', {}, r.startDate),
                         createEl('td', {}, r.startTime),
                         createEl('td', {}, r.endDate),
@@ -580,7 +583,7 @@ function restoreHistoryFromStorage() {
 
                 const z7Table = createEl('table', { className: 'history-z7', style: 'width:100%; border-collapse:collapse;' });
                 const z7Head = createEl('thead');
-                const thZ7 = createEl('th', { className: 'z7-header-common', colspan: '10' }, 'Z7');
+                const thZ7 = createEl('th', { className: 'z7-header-common', colspan: '12' }, 'Z7');
                 const z7HeadTr = createEl('tr');
                 z7HeadTr.append(thZ7);
                 z7Head.append(z7HeadTr);
@@ -905,6 +908,7 @@ async function generateTable() {
 
     const startD = document.getElementById('startDate').value;
     const startT = document.getElementById('startTime').value;
+    const postingD = (document.getElementById('postingDate') && document.getElementById('postingDate').value) ? document.getElementById('postingDate').value : startD;
     const workerCount = validateNumber(document.getElementById('workerCount').value, 1, 10);
     const timeMode = document.getElementById('timeMode').value;
     const lunchStartInput = document.getElementById('lunchStart').value;
@@ -1082,6 +1086,8 @@ async function generateTable() {
                 crossedLunch: crossedLunch,
                 pauseText: rowPauseText,
                 pauseExcelVal: rowPauseExcel,
+                postingDateIso: postingD,
+                postingDate: fmtDate(new Date(postingD + 'T00:00:00')),
                 unit: unit // сохраняем единицу измерения
             });
         }
@@ -1116,9 +1122,9 @@ async function generateTable() {
         return { wrapper, tbody };
     };
 
-    const tblOps = createSubTable(['№ ПДТВ', 'Операция', 'Исполнитель', 'Обед?', 'Перерыв'], 2);
+    const tblOps = createSubTable(['№ ПДТВ', 'Операция', 'Обед?', 'Перерыв'], 2);
     
-    // Определяем единицу измерения для заголовка Длительность
+    // Определяем единицу измерения для заголовка ФактРабота
     let headerUnit = "";
     const uniqueUnits = [...new Set(dataMain.map(r => r.unit || 'min'))];
     if (uniqueUnits.length === 1) {
@@ -1126,7 +1132,9 @@ async function generateTable() {
         else if (uniqueUnits[0] === 'hour') headerUnit = " (час)";
     }
     
-    const tblDur = createSubTable([`Длительность${headerUnit}`], 1);
+    const tblDur = createSubTable([`ФактРабота${headerUnit}`], 1);
+    const tblPostingDate = createSubTable(['Дата проводки'], 1);
+    const tblWorker = createSubTable(['Исполнитель'], 1);
     const tblTime = createSubTable(['Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'], 3);
 
     dataMain.forEach((row) => {
@@ -1134,7 +1142,6 @@ async function generateTable() {
         trOps.append(
             createEl('td', {}, row.opIdx),
             createEl('td', { style: 'text-align:left; font-weight:600;' }, row.name),
-            createEl('td', {}, row.worker),
             createEl('td', { style: 'font-size: 24px; line-height: 1; padding: 4px 12px;' }, row.crossedLunch ? '🍽️' : ''),
             createEl('td', { style: 'color: #555;' }, row.pauseText || '')
         );
@@ -1143,6 +1150,14 @@ async function generateTable() {
         const trDur = createEl('tr');
         trDur.append(createEl('td', {}, row.durText));
         tblDur.tbody.append(trDur);
+
+        const trPostingDate = createEl('tr');
+        trPostingDate.append(createEl('td', {}, row.postingDate || ''));
+        tblPostingDate.tbody.append(trPostingDate);
+
+        const trWorker = createEl('tr');
+        trWorker.append(createEl('td', {}, row.worker));
+        tblWorker.tbody.append(trWorker);
 
         const trTime = createEl('tr');
         trTime.append(
@@ -1154,7 +1169,7 @@ async function generateTable() {
         tblTime.tbody.append(trTime);
     });
 
-    tableResult.append(tblOps.wrapper, tblDur.wrapper, tblTime.wrapper);
+    tableResult.append(tblOps.wrapper, tblDur.wrapper, tblPostingDate.wrapper, tblWorker.wrapper, tblTime.wrapper);
 
     const statusText = sanitizeStrict(document.getElementById('statusBefore').value, 300) || "замечаний нет";
     const extraWorks = sanitizeStrict(document.getElementById('workExtra').value, 300) || "нет";
@@ -1176,7 +1191,7 @@ async function generateTable() {
     const z7Div = createEl('div', { className: 'z7-report-wrapper' });
     const z7Table = createEl('table', { className: 'z7-table' });
     const z7Head = createEl('thead');
-    const thZ7 = createEl('th', { className: 'z7-header-common', colspan: '9' }, 'Z7');
+    const thZ7 = createEl('th', { className: 'z7-header-common', colspan: '12' }, 'Z7');
     const z7HeadTr = createEl('tr');
     z7HeadTr.append(thZ7);
     z7Head.append(z7HeadTr);
@@ -1260,7 +1275,7 @@ async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isCh
             else if (histUniqueUnits[0] === 'hour') histHeaderUnit = " (час)";
         }
         
-        ['№ ПДТВ', 'Операция', 'Исполнитель', 'Обед?', 'Перерыв', `Длительность${histHeaderUnit}`, 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
+        ['№ ПДТВ', 'Операция', 'Обед?', 'Перерыв', `ФактРабота${histHeaderUnit}`, 'Дата проводки', 'Исполнитель', '-', 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
             trHead.append(createEl('th', {}, text));
         });
         thead.append(trHead);
@@ -1271,11 +1286,13 @@ async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isCh
             tr.append(
                 createEl('td', {}, r.opIdx),
                 createEl('td', { style: 'text-align:left;' }, r.name),
-                createEl('td', {}, r.worker),
                 createEl('td', {}, r.crossedLunch ? '🍽️' : ''),
                 createEl('td', { style: 'color: #555;' }, r.pauseText || ''),
                 createEl('td', {}, r.durText),
-                createEl('td', {}, r.startDate),
+                createEl('td', {}, r.postingDate || ''),
+                    createEl('td', {}, r.worker),
+                    createEl('td', {}, ''),
+                    createEl('td', {}, r.startDate),
                 createEl('td', {}, r.startTime),
                 createEl('td', {}, r.endDate),
                 createEl('td', {}, r.endTime)
@@ -1286,7 +1303,7 @@ async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isCh
 
         const z7Table = createEl('table', { className: 'history-z7', style: 'width:100%; border-collapse:collapse;' });
         const z7Head = createEl('thead');
-        const thZ7 = createEl('th', { className: 'z7-header-common', colspan: '10' }, 'Z7');
+        const thZ7 = createEl('th', { className: 'z7-header-common', colspan: '12' }, 'Z7');
         const z7HeadTr = createEl('tr');
         z7HeadTr.append(thZ7);
         z7Head.append(z7HeadTr);
@@ -1391,7 +1408,7 @@ async function exportToExcel() {
     let previousEntryData = null;
     const entriesArray = Array.from(entries).reverse();
 
-    entriesArray.forEach(entry => {
+    entriesArray.forEach((entry, entryIndex) => {
         const data = safeJsonParse(entry.dataset.jsonData);
         if (!data) return;
         const lh = data.lunch.h || 0;
@@ -1415,15 +1432,17 @@ async function exportToExcel() {
 
         xmlBody += `
         <Row>
-            <Cell ss:Index="2" ss:MergeAcross="9" ss:StyleID="sTitle"><Data ss:Type="String">${escapeXml(excelSanitizeCell(data.title))}</Data></Cell>
+            <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sTitle"><Data ss:Type="String">${escapeXml(excelSanitizeCell(data.title))}</Data></Cell>
         </Row>
         <Row>
             <Cell ss:Index="2" ss:StyleID="sHeader"><Data ss:Type="String">№ ПДТВ</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Операция</Data></Cell>
-            <Cell ss:StyleID="sHeader"><Data ss:Type="String">Исполнитель</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Обед?</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Перерыв</Data></Cell>
-            <Cell ss:StyleID="sHeader"><Data ss:Type="String">Длительность${headerUnit}</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">ФактРабота${headerUnit}</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">Дата проводки</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">Исполнитель</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">-</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Дата Начала</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Время Начала</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Дата конца</Data></Cell>
@@ -1434,6 +1453,7 @@ async function exportToExcel() {
         data.rows.forEach((r, idx) => {
             const startXml = formatXmlDate(new Date(r.startObj));
             const endXml = formatXmlDate(new Date(r.endObj));
+            const postingXml = (r.postingDateIso) ? formatXmlDate(new Date(String(r.postingDateIso) + 'T00:00:00')) : startXml;
             const startTimeXml = formatXmlTime(new Date(r.startObj));
             const pauseVal = typeof r.pauseExcelVal === 'number' ? r.pauseExcelVal : 0;
             
@@ -1452,28 +1472,59 @@ async function exportToExcel() {
                 durCell = `<Cell ss:StyleID="sDurEditable"><Data ss:Type="Number">${r.durVal}</Data></Cell>`;
             }
 
-            // Ячейка паузы. 
-            // Op 1 Worker 1: Редактируемая.
-            // Op 1 Worker > 1: Защищена, копия значения сверху.
-            // Op > 1: Защищена, пустая.
+            // Ячейка паузы:
+            // - Первая операция первой записи: пустая, защищённая (пауза не нужна)
+            // - Первая операция второй+ записей: значение из веб, редактируемая (worker 1) или =R[-1]C
+            // - Вторая+ операции всех записей: 0 по умолчанию, редактируемая (только worker 1 в операции)
+            const isFirstEntryFirstOp = (entryIndex === 0 && curOpNum === 1);
+            const isFirstOpOfEntry = (curOpNum === 1);
+            const isFirstWorkerOfOp = (curOpNum !== prevRowOpNum);
+            
             let pauseCell;
-            if (curOpNum === 1) {
+            if (isFirstEntryFirstOp) {
+                // Первая операция первой записи - пауза не нужна
+                if (r.workerIndex === 1) {
+                    pauseCell = `<Cell ss:StyleID="sTimeLocked"><Data ss:Type="Number">0</Data></Cell>`;
+                } else {
+                    pauseCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">0</Data></Cell>`;
+                }
+            } else if (isFirstOpOfEntry) {
+                // Первая операция второй+ записей - значение из веб
                 if (r.workerIndex === 1) {
                     pauseCell = `<Cell ss:StyleID="sTimeEditable"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 } else {
                     pauseCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 }
             } else {
-                pauseCell = `<Cell ss:StyleID="sTimeLocked"></Cell>`;
+                // Вторая+ операции всех записей - 0 по умолчанию, редактируемая
+                if (isFirstWorkerOfOp) {
+                    pauseCell = `<Cell ss:StyleID="sTimeEditable"><Data ss:Type="Number">0</Data></Cell>`;
+                } else {
+                    pauseCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">0</Data></Cell>`;
+                }
             }
 
             if (idx === 0) {
                 if (isChain && previousEntryData) {
                     // offset = 5 (заголовок Z7 + разделители) + (z7.length * 2) т.к. после каждой строки Z7 пустая строка
                     const offset = 5 + (previousEntryData.z7.length * 2);
-                    // Формула: (Конец пред. таблицы) + (Пауза этой строки)
-                    // Если пауза пустая, Excel воспримет как 0, формула не сломается
-                    startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=MOD(R[-${offset}]C[2] + RC[-3],1)"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
+                    // Формула: (Конец пред. таблицы) + (Пауза этой строки), со сдвигом если попадает в обед
+                    const rawTimeRef = `(R[-${offset}]C[2] + RC[-6])`;
+                    const l1ValChain = `TIME(${lh},${lm},0)`;
+                    const l1EndChain = `(TIME(${lh},${lm},0)+TIME(0,${ld},0))`;
+                    const chainShiftCond1 = `AND(${rawTimeRef}>=${l1ValChain}, ${rawTimeRef}<${l1EndChain})`;
+                    const hasLunch2Chain = !(lh2 === 0 && lm2 === 0);
+                    let chainFormula;
+                    if (hasLunch2Chain) {
+                        const l2ValChain = `TIME(${lh2},${lm2},0)`;
+                        const l2EndChain = `(TIME(${lh2},${lm2},0)+TIME(0,${ld},0))`;
+                        const shifted1 = `IF(${chainShiftCond1},${l1EndChain},${rawTimeRef})`;
+                        const chainShiftCond2 = `AND(${shifted1}>=${l2ValChain}, ${shifted1}<${l2EndChain})`;
+                        chainFormula = `=MOD(IF(${chainShiftCond2},${l2EndChain},${shifted1}),1)`;
+                    } else {
+                        chainFormula = `=MOD(IF(${chainShiftCond1},${l1EndChain},${rawTimeRef}),1)`;
+                    }
+                    startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="${escapeXml(chainFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                 } else {
                     // Если первая таблица или не цепочка - время фиксировано
                     startTimeCell = `<Cell ss:StyleID="sTimeEditable"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
@@ -1482,8 +1533,26 @@ async function exportToExcel() {
                 if (curOpNum === prevRowOpNum) {
                     startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                 } else {
-                    // Начало операции (кроме первой) ссылается на конец предыдущей. 
-                    startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=MOD(R[-1]C[2],1)"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
+                    // Начало операции (кроме первой) ссылается на конец предыдущей + пауза.
+                    // Но если результат попадает в обед - сдвигаем на конец обеда.
+                    const l1ValStart = `TIME(${lh},${lm},0)`;
+                    const l1EndStart = `(TIME(${lh},${lm},0)+TIME(0,${ld},0))`;
+                    // RC[-6] = пауза текущей строки (столбец E, Перерыв)
+                    const rawTimeWithPause = `(R[-1]C[2]+RC[-6])`;
+                    // Условие: (prevEnd + pause) >= lunchStart AND (prevEnd + pause) < lunchEnd => сдвиг на lunchEnd
+                    const startShiftCond1 = `AND(${rawTimeWithPause}>=${l1ValStart}, ${rawTimeWithPause}<${l1EndStart})`;
+                    let startFormula;
+                    const hasLunch2Local = !(lh2 === 0 && lm2 === 0);
+                    if (hasLunch2Local) {
+                        const l2ValStart = `TIME(${lh2},${lm2},0)`;
+                        const l2EndStart = `(TIME(${lh2},${lm2},0)+TIME(0,${ld},0))`;
+                        const shifted1 = `IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause})`;
+                        const startShiftCond2 = `AND(${shifted1}>=${l2ValStart}, ${shifted1}<${l2EndStart})`;
+                        startFormula = `=MOD(IF(${startShiftCond2},${l2EndStart},${shifted1}),1)`;
+                    } else {
+                        startFormula = `=MOD(IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause}),1)`;
+                    }
+                    startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                 }
             }
 
@@ -1496,43 +1565,61 @@ async function exportToExcel() {
             const l2Val = `TIME(${lh2},${lm2},0)`;
             const l2End = `(TIME(${lh2},${lm2},0)+TIME(0,${ld},0))`;
             
-            // --- ICONS (RC[4] = Start, RC[2] = Dur) ---
-            // Условие 1: начало < конец_обеда И конец_операции > начало_обеда
-            const icC1 = `AND(RC[4] < ${l1End}, (RC[4]+(RC[2]/${unitDiv})) > ${l1Val})`;
+            // --- ICONS (RC[7] = Start, RC[2] = Dur) ---
+            // JS логика: показать иконку если:
+            // 1) начало попадало в обед (в Excel уже сдвинуто на конец обеда)
+            // 2) начало < lunchStart И конец СТРОГО > lunchStart (накрывает обед)
+            // Условие 1: start ≈ lunchEnd (был сдвинут, проверяем с допуском 1 сек)
+            // Условие 2: start < lunchStart AND rawEnd > lunchStart + 1сек
+            const icRawEnd = `(RC[7]+(RC[2]/${unitDiv}))`;
+            const icWasShifted1 = `ABS(RC[7]-${l1End})<TIME(0,0,1)`;
+            const icCovers1 = `AND(RC[7]<${l1Val}, ${icRawEnd}>(${l1Val}+TIME(0,0,1)))`;
+            const icC1 = `OR(${icWasShifted1}, ${icCovers1})`;
             const icShift1 = `IF(${icC1}, ${lDurVal}, 0)`;
             
             let formulaIcon;
             if (hasLunch2) {
-                // Условие 2: для второго обеда (с учётом сдвига от первого)
-                const icC2 = `AND((RC[4] + ${icShift1}) < ${l2End}, (RC[4]+(RC[2]/${unitDiv}) + ${icShift1}) > ${l2Val})`;
+                // Для второго обеда: аналогичная логика с учётом сдвига от первого
+                const shiftedStart = `(RC[7]+${icShift1})`;
+                const shiftedEnd = `(${icRawEnd}+${icShift1})`;
+                const icWasShifted2 = `ABS(${shiftedStart}-${l2End})<TIME(0,0,1)`;
+                const icCovers2 = `AND(${shiftedStart}<${l2Val}, ${shiftedEnd}>(${l2Val}+TIME(0,0,1)))`;
+                const icC2 = `OR(${icWasShifted2}, ${icCovers2})`;
                 formulaIcon = `=IF(OR(${icC1}, ${icC2}), "🍽️", "")`;
             } else {
                 // Второй обед не задан - проверяем только первый
                 formulaIcon = `=IF(${icC1}, "🍽️", "")`;
             }
 
-            // --- END TIME (RC[-2] = Start, RC[-4] = Dur) ---
-            const enC1 = `AND(RC[-2] < ${l1End}, (RC[-2]+(RC[-4]/${unitDiv})) > ${l1Val})`;
+            // --- END TIME (RC[-2] = Start Time, RC[-7] = Dur) ---
+            // Условие: операция НАКРЫВАЕТ обед (начало ДО начала обеда И конец СТРОГО ПОСЛЕ начала обеда)
+            // Добавляем порог 1 секунда чтобы избежать погрешности floating point
+            // Если конец = началу обеда, обед НЕ добавляется
+            const rawEnd = `(RC[-2]+(RC[-7]/${unitDiv}))`;
+            const enC1 = `AND(RC[-2] < ${l1Val}, ${rawEnd} > (${l1Val}+TIME(0,0,1)))`;
             const enShift1 = `IF(${enC1}, ${lDurVal}, 0)`;
             
             let formulaEnd;
             if (hasLunch2) {
-                const enC2 = `AND((RC[-2] + ${enShift1}) < ${l2End}, (RC[-2]+(RC[-4]/${unitDiv}) + ${enShift1}) > ${l2Val})`;
+                const shiftedEnd = `(${rawEnd} + ${enShift1})`;
+                const enC2 = `AND((RC[-2] + ${enShift1}) < ${l2Val}, ${shiftedEnd} > (${l2Val}+TIME(0,0,1)))`;
                 const enShift2 = `IF(${enC2}, ${lDurVal}, 0)`;
-                formulaEnd = `=MOD(RC[-2]+(RC[-4]/${unitDiv}) + ${enShift1} + ${enShift2}, 1)`;
+                formulaEnd = `=MOD(${rawEnd} + ${enShift1} + ${enShift2}, 1)`;
             } else {
                 // Второй обед не задан - учитываем только первый
-                formulaEnd = `=MOD(RC[-2]+(RC[-4]/${unitDiv}) + ${enShift1}, 1)`;
+                formulaEnd = `=MOD(${rawEnd} + ${enShift1}, 1)`;
             }
 
             xmlBody += `
             <Row>
                 <Cell ss:Index="2" ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(String(r.opIdx))}</Data></Cell>
                 <Cell ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(r.name))}</Data></Cell>
-                <Cell ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(String(r.worker)))}</Data></Cell>
                 <Cell ss:StyleID="sIconLocked" ss:Formula="${escapeXml(formulaIcon)}"><Data ss:Type="String">${r.crossedLunch ? '🍽️' : ''}</Data></Cell>
                 ${pauseCell}
                 ${durCell}
+                <Cell ss:StyleID="sDateLocked"><Data ss:Type="DateTime">${postingXml}</Data></Cell>
+                <Cell ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(String(r.worker)))}</Data></Cell>
+                <Cell ss:StyleID="sBorderLocked"><Data ss:Type="String"></Data></Cell>
                 <Cell ss:StyleID="sDateLocked"><Data ss:Type="DateTime">${startXml}</Data></Cell>
                 ${startTimeCell}
                 <Cell ss:StyleID="sDateLocked"><Data ss:Type="DateTime">${endXml}</Data></Cell>
@@ -1543,7 +1630,7 @@ async function exportToExcel() {
 
         xmlBody += `
         <Row>
-            <Cell ss:Index="2" ss:MergeAcross="9" ss:StyleID="sTitle"><Data ss:Type="String">Z7</Data></Cell>
+            <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sTitle"><Data ss:Type="String">Z7</Data></Cell>
         </Row>
         `;
 
@@ -1553,19 +1640,19 @@ async function exportToExcel() {
             if (zi === 1) {
                 xmlBody += `
             <Row ss:Height="48" ss:AutoFitHeight="0">
-                <Cell ss:Index="2" ss:MergeAcross="9" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(line))}</Data></Cell>
+                <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(line))}</Data></Cell>
             </Row>
             <Row>
-                <Cell ss:Index="2" ss:MergeAcross="9" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String"></Data></Cell>
+                <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String"></Data></Cell>
             </Row>
             `;
             } else {
                 xmlBody += `
             <Row>
-                <Cell ss:Index="2" ss:MergeAcross="9" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(line))}</Data></Cell>
+                <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(line))}</Data></Cell>
             </Row>
             <Row>
-                <Cell ss:Index="2" ss:MergeAcross="9" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String"></Data></Cell>
+                <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String"></Data></Cell>
             </Row>
             `;
             }
@@ -1679,15 +1766,17 @@ function buildExcelXml(xmlBody) {
   <Table>
    <Column ss:Width="20" ss:StyleID="sTextLocked"/> <!-- Margin -->
     <Column ss:Width="90" ss:StyleID="sTextLocked"/> <!-- № ( widened to fit 8-digit numbers ) -->
-   <Column ss:Width="200" ss:StyleID="sTextLocked"/> <!-- Operation -->
-   <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- Worker -->
-   <Column ss:Width="50" ss:StyleID="sTextLocked"/> <!-- Lunch? -->
-   <Column ss:Width="70" ss:StyleID="sTextLocked"/> <!-- Pause (New) -->
-   <Column ss:Width="130" ss:StyleID="sTextLocked"/> <!-- Duration -->
-   <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- Start D -->
-   <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- Start T -->
-   <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- End D -->
-   <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- End T -->
+    <Column ss:Width="200" ss:StyleID="sTextLocked"/> <!-- Operation -->
+    <Column ss:Width="50" ss:StyleID="sTextLocked"/> <!-- Lunch? -->
+    <Column ss:Width="70" ss:StyleID="sTextLocked"/> <!-- Pause (New) -->
+    <Column ss:Width="130" ss:StyleID="sTextLocked"/> <!-- Duration -->
+    <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- Posting D -->
+    <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- Worker -->
+    <Column ss:Width="140" ss:StyleID="sTextLocked"/> <!-- - (empty) -->
+    <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- Start D -->
+    <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- Start T -->
+    <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- End D -->
+    <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- End T -->
    ${xmlBody}
   </Table>
   <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
@@ -1818,11 +1907,13 @@ function setCardData(steps) {
 function loadTechCards() {
     const userGroup = document.getElementById('userCards');
     userGroup.textContent = '';
-    Object.keys(localStorage)
-        .filter(k => k.startsWith('z7_card_'))
-        .forEach(k => {
-            userGroup.append(createEl('option', { value: k }, k.replace('z7_card_', '')));
-        });
+    const keys = Object.keys(localStorage).filter(k => k.startsWith('z7_card_'));
+    // Map to labels and sort using numeric-aware comparison so '10' > '2' is handled
+    const mapped = keys.map(k => ({ key: k, label: k.replace('z7_card_', '') }));
+    mapped.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }));
+    mapped.forEach(({ key, label }) => {
+        userGroup.append(createEl('option', { value: key }, label));
+    });
 }
 
 // === ПРИВЯЗКА СОБЫТИЙ ===
@@ -1905,6 +1996,7 @@ document.getElementById('clearBtn').addEventListener('click', async () => {
             coefK: '',
             orderName: '',
             itemName: '',
+            postingDate: _todayStr,
             statusBefore: 'замечаний нет',
             workExtra: 'нет',
             devRec: 'нет'
@@ -1914,6 +2006,7 @@ document.getElementById('clearBtn').addEventListener('click', async () => {
             document.getElementById('totalOps').value = defaults.totalOps;
             document.getElementById('workerCount').value = defaults.workerCount;
             document.getElementById('startDate').value = defaults.startDate;
+            try { if (document.getElementById('postingDate')) document.getElementById('postingDate').value = defaults.postingDate; } catch(e){}
             document.getElementById('startTime').value = defaults.startTime;
             document.getElementById('chainMode').checked = defaults.chainMode;
             document.getElementById('lunchStart').value = defaults.lunchStart;

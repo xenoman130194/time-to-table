@@ -80,7 +80,7 @@ body {
 
 .setup-grid { 
     display: grid; 
-    grid-template-columns: repeat(6, 1fr); 
+    grid-template-columns: repeat(8, 1fr); 
     gap: 15px; 
     margin-bottom: 15px; 
     align-items: flex-end; 
@@ -131,11 +131,12 @@ input:focus, select:focus {
 
 /* Grid layout assignments - optimized 6-column distribution (3 rows) */
 
-/* Row 1: Техкарта (3) + Дата (1) + Время (1) + Режим (1) = 6 cols */
+/* Row 1: Техкарта (5) + Дата проводки (1) + Дата (1) + Время (1) = 8 cols */
 .setup-grid > .input-group:first-child {
-    grid-column: span 3;
+    grid-column: span 5;
 }
 
+.input-group:has(#postingDate),
 .input-group:has(#startDate),
 .input-group:has(#startTime),
 .input-group:has(#chainMode) {
@@ -152,13 +153,13 @@ input:focus, select:focus {
     grid-column: span 1;
 }
 
-/* Row 3: Заказ (1) + Наименование (3) + Rиз (1) + Коэф.K (1) = 6 cols */
+/* Row 3: Заказ (1) + Наименование (6) + Rиз (1) + Коэф.K (1) = 8 cols */
 .input-group:has(#orderName) {
     grid-column: span 1;
 }
 
 .input-group:has(#itemName) {
-    grid-column: span 3;
+    grid-column: span 6;
 }
 
 .input-group:has(#resIz),
