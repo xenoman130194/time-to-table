@@ -302,6 +302,13 @@ if (postingDateInput) postingDateInput.value = `${yyyy}-${mm}-${dd}`;
 
 const startTimeInput = document.getElementById('startTime');
 const container = document.getElementById('fieldsContainer');
+// Attach handler to timeMode selector to toggle worker UI
+try {
+    const timeModeEl = document.getElementById('timeMode');
+    if (timeModeEl) {
+        timeModeEl.addEventListener('change', () => updateWorkerUIByTimeMode());
+    }
+} catch (e) { console.debug?.('attach timeMode listener failed:', e?.message); }
 // State for operations modal (moved early to avoid TDZ when functions run)
 let operationFirstId = ''; // Первый 8-значный номер подтверждения
 let lastOperationIndex = null; // Индекс операции, которая будет "последней"
@@ -562,17 +569,18 @@ function restoreHistoryFromStorage() {
                     else if (restoreUniqueUnits[0] === 'hour') restoreHeaderUnit = " (час)";
                 }
                 
-                ['№ ПДТВ', 'Операция', 'Обед?', 'Пауза', `ФактРабота${restoreHeaderUnit}`, 'Дата проводки', 'Исполнитель', 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
+                ['№', 'ПДТВ', 'Операция', 'Обед?', 'Пауза', `ФактРабота${restoreHeaderUnit}`, 'Дата проводки', 'Исполнитель', 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
                     trHead.append(createEl('th', {}, text));
                 });
                 thead.append(trHead);
 
                 const tbody = createEl('tbody');
-                data.rows.forEach(r => {
+                data.rows.forEach((r, ri) => {
                     const tr = createEl('tr');
                     tr.append(
+                        createEl('td', {}, ri + 1),
                         createEl('td', {}, r.opIdx),
-                        createEl('td', { style: 'text-align:left;' }, r.name),
+                        createEl('td', { style: 'text-align:center; font-weight:600;' }, r.name),
                         createEl('td', {}, r.crossedLunch ? '🍽️' : ''),
                         createEl('td', { style: 'color: #555;' }, r.pauseText || ''),
                         createEl('td', {}, r.durText),
@@ -656,42 +664,26 @@ async function clearHistoryData() {
 function updateFirstPauseVisibility() {
     const firstOpBlock = document.querySelector('.op-block');
     if (!firstOpBlock) return;
-    
-    const toggleDiv = firstOpBlock.querySelector('.order-pause-toggle')?.parentElement;
-    if (!toggleDiv) return;
-    
-    const isChainMode = document.getElementById('chainMode').checked;
     const historyList = document.getElementById('historyList');
     const isFirstCalculation = historyList.children.length === 0;
-    
-    // Показать паузу ТОЛЬКО если: режим цепочки включен И история НЕ пуста
-    if (isChainMode && !isFirstCalculation) {
-        toggleDiv.style.display = 'flex';
-    } else {
-        // Скрываем переключатель паузы и сбрасываем значение паузы в первом блоке
-        toggleDiv.style.display = 'none';
-        try {
-            const chk = firstOpBlock.querySelector('.order-pause-toggle');
-            const breakGroup = firstOpBlock.querySelector('.break-container');
-            const breakInput = firstOpBlock.querySelector('.op-break-val');
-            const breakUnit = firstOpBlock.querySelector('.op-break-unit');
-            if (chk) {
-                chk.checked = false;
-            }
-            if (breakGroup) {
-                breakGroup.style.display = 'none';
-            }
+
+    // If this is the very first calculation (history empty), hide break input for the first operation
+    try {
+        const breakGroup = firstOpBlock.querySelector('.break-container');
+        const breakInput = firstOpBlock.querySelector('.op-break-val');
+        const breakUnit = firstOpBlock.querySelector('.op-break-unit');
+        if (isFirstCalculation) {
+            if (breakGroup) breakGroup.style.display = 'none';
             if (breakInput) {
                 breakInput.value = '0';
-                // trigger input event to ensure any sanitizers run
                 breakInput.dispatchEvent(new Event('input'));
             }
-            if (breakUnit) {
-                breakUnit.value = 'min';
-            }
-        } catch (e) {
-            console.debug?.('reset pause visibility error:', e?.message);
+            if (breakUnit) breakUnit.value = 'min';
+        } else {
+            if (breakGroup) breakGroup.style.display = 'flex';
         }
+    } catch (e) {
+        console.debug?.('reset pause visibility error:', e?.message);
     }
 }
 
@@ -727,7 +719,7 @@ function renderFields() {
     } catch (e) {
         console.debug?.('renderFields modal update error:', e?.message);
     }
-    try { updateMainOperationLabels(); updateOperationInputPrefixes(); } catch (e) { /* ignore */ }
+        try { updateMainOperationLabels(); updateOperationInputPrefixes(); updateWorkerUIByTimeMode(); } catch (e) { /* ignore */ }
 }
 
 function createOperationBlock(index) {
@@ -805,6 +797,46 @@ function createOperationBlock(index) {
     
     
     const controls = createEl('div', { className: 'op-controls' });
+
+    // Исполнители: чекбоксы под названием операции
+    const workersWrapper = createEl('div', { className: 'op-workers-wrapper' });
+    workersWrapper.append(createEl('label', { className: 'op-workers-label' }, 'Исполнители:'));
+    const workersBox = createEl('div', { className: 'op-workers-box' });
+    // populate according to current workerCount
+    try {
+        const curCount = Number.parseInt(document.getElementById('workerCount')?.value || '1', 10) || 1;
+        for (let w = 1; w <= curCount; w++) {
+            const id = `op_${index}_worker_${w}`;
+            const cb = createEl('input', { type: 'checkbox', className: 'op-worker-checkbox', id, 'data-worker': String(w) });
+            cb.checked = true;
+            const lbl = createEl('label', { htmlFor: id, className: 'op-worker-label' }, String(w));
+            const wrapper = createEl('span', { className: 'op-worker-item' });
+            wrapper.append(cb, lbl);
+            workersBox.append(wrapper);
+
+            // propagate unchecked to subsequent ops
+            cb.addEventListener('change', (e) => {
+                if (!cb.checked) {
+                    try {
+                        const blocks = Array.from(document.querySelectorAll('.op-block'));
+                        const curIdx = blocks.indexOf(block);
+                        if (curIdx >= 0) {
+                            for (let bi = curIdx + 1; bi < blocks.length; bi++) {
+                                const other = blocks[bi].querySelector(`.op-worker-checkbox[data-worker="${w}"]`);
+                                if (other) other.checked = false;
+                            }
+                        }
+                    } catch (err) { console.debug?.('propagate worker checkbox change error', err?.message); }
+                }
+            });
+        }
+    } catch (err) {
+        console.debug?.('init op workers failed:', err?.message);
+    }
+    workersWrapper.append(workersBox);
+    // Element shown when all workers apply (replaces checkboxes in non-individual mode)
+    const workersAll = createEl('div', { className: 'op-workers-all', style: 'display:none;' }, 'ВСЕ.');
+    workersWrapper.append(workersAll);
     
     // Блок времени работы
     const workGroup = createEl('div', { className: 'time-group' });
@@ -835,6 +867,9 @@ function createOperationBlock(index) {
         e.target.value = v;
     });
     workGroup.append(workInput);
+    // placeholder shown when mode == individual
+    const workAll = createEl('div', { className: 'op-dur-all', style: 'display:none;' }, 'В Excel');
+    workGroup.append(workAll);
     const workUnit = createEl('select', {
         className: 'op-unit',
         name: `op_unit_${index}`,
@@ -859,8 +894,9 @@ function createOperationBlock(index) {
     }
     workGroup.append(workUnit);
     
-    // Блок паузы между заказами (только для первой операции)
+    // Блок паузы между заказами (видим во всех карточках, кроме первой операции первой записи)
     const breakGroup = createEl('div', { className: 'time-group break-container' });
+    // Visible label for the break input — use same style as 'Время' label
     breakGroup.append(createEl('label', { htmlFor: `op_break_${index}` }, 'Пауза:'));
     const breakInput = createEl('input', {
         type: 'text',
@@ -897,51 +933,72 @@ function createOperationBlock(index) {
         new Option('час', 'hour')
     );
     breakGroup.append(breakUnit);
+    const breakAll = createEl('div', { className: 'op-break-all', style: 'display:none;' }, 'В Excel');
+    breakGroup.append(breakAll);
     
-    // Чекбокс для паузы между заказами
-    const toggleDiv = createEl('div', { style: 'display:flex; align-items:center;' });
-    const chk = createEl('input', {
-        type: 'checkbox',
-        className: 'order-pause-toggle',
-        id: `op_pause_${index}`,
-        name: `op_pause_${index}`,
-        style: 'margin:0;'
-    });
-    toggleDiv.append(chk, createEl('label', { htmlFor: `op_pause_${index}`, style: 'margin-left:4px; cursor:pointer;' }, 'Пауза'));
-    
-    // Скрыть паузу для всех блоков кроме первого
+    // Append break group and controls. Initial visibility for breakGroup
+    // Default visibility: show break for all ops except first (first is managed by updateFirstPauseVisibility)
     if (index !== 1) {
-        toggleDiv.style.display = 'none';
+        breakGroup.style.display = 'flex';
+    } else {
+        breakGroup.style.display = 'none';
     }
-    
-    const updateBreakVis = () => {
-        breakGroup.style.display = chk.checked ? 'flex' : 'none';
-        toggleDiv.style.opacity = chk.checked ? '0.5' : '1';
-        if (!chk.checked) {
-            try {
-                // Reset break value when user unchecks the pause
-                breakInput.value = '0';
-                breakInput.dispatchEvent(new Event('input'));
-                if (breakGroup) breakGroup.style.display = 'none';
-            } catch (e) {
-                console.debug?.('updateBreakVis reset error:', e?.message);
-            }
-        }
-    };
-    
-    chk.addEventListener('change', updateBreakVis);
-    toggleDiv.querySelector('label').addEventListener('click', () => {
-        chk.checked = !chk.checked;
-        updateBreakVis();
-    });
-    
-    controls.append(toggleDiv, breakGroup, workGroup);
-    block.append(numLabel, nameInp, controls);
+    controls.append(breakGroup, workGroup);
+    // name input + workers UI
+    const nameCol = createEl('div', { className: 'op-name-col' });
+    nameCol.append(nameInp, workersWrapper);
+    block.append(numLabel, nameCol, controls);
     container.append(block);
-    updateBreakVis();
     
     // Обновить видимость паузы первого блока после создания нового блока
     updateFirstPauseVisibility();
+    // Ensure worker UI reflects current timeMode selection
+    try { updateWorkerUIByTimeMode(); } catch (e) {}
+}
+
+// Toggle per-operation worker checkboxes visibility according to #timeMode
+function updateWorkerUIByTimeMode() {
+    const modeEl = document.getElementById('timeMode');
+    if (!modeEl) return;
+    const mode = modeEl.value;
+    const blocks = Array.from(document.querySelectorAll('.op-block'));
+    blocks.forEach(block => {
+        const box = block.querySelector('.op-workers-box');
+        const allEl = block.querySelector('.op-workers-all');
+        const workInput = block.querySelector('.op-duration');
+        const workAll = block.querySelector('.op-dur-all');
+        const breakInput = block.querySelector('.op-break-val');
+        const breakUnit = block.querySelector('.op-break-unit');
+        const breakAll = block.querySelector('.op-break-all');
+        if (!box || !allEl) return;
+        if (mode === 'individual') {
+            // Individual: show per-op worker checkboxes, hide numeric inputs and show 'В Excel' placeholders
+            box.style.display = 'grid';
+            allEl.style.display = 'none';
+            if (workInput) {
+                workInput.value = '0';
+                workInput.style.display = 'none';
+            }
+            if (workAll) workAll.style.display = '';
+            if (breakInput) {
+                breakInput.value = '0';
+                breakInput.style.display = 'none';
+            }
+            if (breakUnit) breakUnit.style.display = 'none';
+            if (breakAll) breakAll.style.display = '';
+        } else {
+            // total / per_worker: hide per-op worker checkboxes and show unified inputs
+            const cbs = Array.from(box.querySelectorAll('.op-worker-checkbox'));
+            cbs.forEach(cb => { cb.checked = true; });
+            box.style.display = 'none';
+            allEl.style.display = 'inline-flex';
+            if (workInput) workInput.style.display = '';
+            if (workAll) workAll.style.display = 'none';
+            if (breakInput) { breakInput.style.display = ''; }
+            if (breakUnit) { breakUnit.style.display = ''; }
+            if (breakAll) breakAll.style.display = 'none';
+        }
+    });
 }
 
 async function generateTable() {
@@ -963,7 +1020,7 @@ async function generateTable() {
     lunchDurMin = Math.max(0, Math.min(480, lunchDurMin));
     const isChain = document.getElementById('chainMode').checked;
     // Validate select values to expected enums
-    if (timeMode !== 'per_worker' && timeMode !== 'total') {
+    if (timeMode !== 'per_worker' && timeMode !== 'total' && timeMode !== 'individual') {
         console.warn('Unexpected timeMode value, defaulting to "total"');
     }
     
@@ -981,40 +1038,7 @@ async function generateTable() {
     ts = ts || 0;
     let globalTime = new Date(y, m - 1, d, th, tm, ts);
     
-    // Получаем параметры паузы (для первой операции)
-    const firstOpBlock = document.querySelector('.op-block');
-    let pauseText = "";
-    let pauseExcelVal = 0; // в днях (для Excel)
-    
-    let pauseAppliedMs = 0;
-
-    if (firstOpBlock) {
-        const pauseChk = firstOpBlock.querySelector('.order-pause-toggle');
-            if (pauseChk?.checked && !isFirstCalculation) {
-            const pauseDur = Math.max(0, Number.parseFloat(firstOpBlock.querySelector('.op-break-val').value) || 0);
-            let pauseUnit = firstOpBlock.querySelector('.op-break-unit').value;
-            if (pauseUnit !== 'min' && pauseUnit !== 'hour') pauseUnit = 'min';
-            
-            // Если пауза выставлена (даже 0), мы её будем отображать для первой операции, 
-            // если считаем, что наличие галочки = наличие паузы. 
-            // Но пользователь просил "если паузы нет - ячейка пустая". 
-            // Будем считать, что если > 0, то отображаем.
-            if (pauseDur > 0) {
-               pauseText = formatDurationToTime(pauseDur, pauseUnit);
-               
-               let pauseSec = 0;
-               if (pauseUnit === 'min') pauseSec = pauseDur * 60;
-               else if (pauseUnit === 'hour') pauseSec = pauseDur * 3600;
-               else pauseSec = pauseDur * 60; 
-
-               pauseAppliedMs = pauseSec * 1000;
-               pauseExcelVal = pauseSec / 86400.0;
-            }
-        }
-    }
-
-    // Применяем паузу к глобальному времени
-    globalTime = new Date(globalTime.getTime() + pauseAppliedMs);
+    // Пер-операционная пауза будет применяться перед каждой операции в цикле ниже
     
     // --- 
     
@@ -1079,6 +1103,14 @@ async function generateTable() {
             displayDurVal = displayDurVal / workerCount;
         }
 
+        // Apply per-operation break BEFORE starting this operation (even if 0)
+        const opBreakVal = Math.max(0, Number.parseFloat(block.querySelector('.op-break-val').value) || 0);
+        let opBreakUnit = block.querySelector('.op-break-unit')?.value || 'min';
+        if (opBreakUnit !== 'min' && opBreakUnit !== 'hour') opBreakUnit = 'min';
+        const opBreakSec = (opBreakUnit === 'hour') ? (opBreakVal * 3600) : (opBreakVal * 60);
+        const opBreakMs = Math.floor(opBreakSec * 1000);
+        globalTime = new Date(globalTime.getTime() + opBreakMs);
+
         let opStart = new Date(globalTime);
         let opEnd = new Date(opStart.getTime() + durationMs);
         let crossedLunch = false;
@@ -1111,9 +1143,14 @@ async function generateTable() {
         }).format(displayDurVal);
 
         for (let w = 1; w <= workerCount; w++) {
-            // Пауза применяется ко всем исполнителям первой операции
-            const rowPauseText = (opIndex === 0) ? pauseText : "";
-            const rowPauseExcel = (opIndex === 0) ? pauseExcelVal : 0;
+            // If a checkbox for this worker exists on this operation and is unchecked, skip creating rows for them
+            try {
+                const cb = block.querySelector(`.op-worker-checkbox[data-worker="${w}"]`);
+                if (cb && !cb.checked) continue;
+            } catch (err) { /* ignore selector errors */ }
+            // Пауза операции (показываем текстовое значение, если >0)
+            const rowPauseText = opBreakVal > 0 ? formatDurationToTime(opBreakVal, opBreakUnit) : "";
+            const rowPauseExcel = opBreakSec / 86400.0;
 
             dataMain.push({
                 opIdx: getOperationLabel(opIndex + 1, ops.length), // Номер подтверждения или порядковый номер
@@ -1168,7 +1205,7 @@ async function generateTable() {
         return { wrapper, tbody };
     };
 
-    const tblOps = createSubTable(['№ ПДТВ', 'Операция', 'Обед?', 'Пауза'], 2);
+    const tblOps = createSubTable(['№', 'ПДТВ', 'Операция', 'Обед?', 'Пауза'], 2);
     
     // Определяем единицу измерения для заголовка ФактРабота
     let headerUnit = "";
@@ -1183,11 +1220,12 @@ async function generateTable() {
     const tblWorker = createSubTable(['Исполнитель'], 1);
     const tblTime = createSubTable(['Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'], 3);
 
-    dataMain.forEach((row) => {
+    dataMain.forEach((row, ri) => {
         const trOps = createEl('tr');
         trOps.append(
+            createEl('td', {}, ri + 1),
             createEl('td', {}, row.opIdx),
-            createEl('td', { style: 'text-align:left; font-weight:600;' }, row.name),
+            createEl('td', { style: 'text-align:center; font-weight:600;' }, row.name),
             createEl('td', { style: 'font-size: 24px; line-height: 1; padding: 4px 12px;' }, row.crossedLunch ? '🍽️' : ''),
             createEl('td', { style: 'color: #555;' }, row.pauseText || '')
         );
@@ -1262,10 +1300,10 @@ async function generateTable() {
     
     // orderPauseConfig сохраняем для совместимости, но данные уже в строках
     const orderPauseConfig = { dur: 0, unit: 'min', isApplied: !isFirstCalculation }; // Dummy values as actual are in rows
-    await addToHistoryTable(dataMain, cardName, z7Lines, lunchConfig, isChain, orderPauseConfig);
+    await addToHistoryTable(dataMain, cardName, z7Lines, lunchConfig, isChain, orderPauseConfig, timeMode);
 }
 
-async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isChain, orderPauseConfig) {
+async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isChain, orderPauseConfig, timeMode) {
     try {
         const historyList = document.getElementById('historyList');
         const timestamp = new Date().toLocaleString('ru');
@@ -1277,7 +1315,8 @@ async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isCh
             z7: z7LinesArray,
             lunch: lunchConfig,
             chain: isChain,
-            orderPause: orderPauseConfig
+            orderPause: orderPauseConfig,
+            timeMode: timeMode || 'total'
         });
 
         const header = createEl('div', { className: 'history-header' });
@@ -1321,17 +1360,18 @@ async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isCh
             else if (histUniqueUnits[0] === 'hour') histHeaderUnit = " (час)";
         }
         
-        ['№ ПДТВ', 'Операция', 'Обед?', 'Пауза', `ФактРабота${histHeaderUnit}`, 'Дата проводки', 'Исполнитель', '-', 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
+        ['№', 'ПДТВ', 'Операция', 'Обед?', 'Пауза', `ФактРабота${histHeaderUnit}`, 'Дата проводки', 'Исполнитель', '-', 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
             trHead.append(createEl('th', {}, text));
         });
         thead.append(trHead);
 
         const tbody = createEl('tbody');
-        data.forEach(r => {
+        data.forEach((r, ri) => {
             const tr = createEl('tr');
             tr.append(
+                createEl('td', {}, ri + 1),
                 createEl('td', {}, r.opIdx),
-                createEl('td', { style: 'text-align:left;' }, r.name),
+                createEl('td', { style: 'text-align:center;' }, r.name),
                 createEl('td', {}, r.crossedLunch ? '🍽️' : ''),
                 createEl('td', { style: 'color: #555;' }, r.pauseText || ''),
                 createEl('td', {}, r.durText),
@@ -1431,6 +1471,177 @@ function updateStartTimeFromHistory() {
     }
 }
 
+// Undo / Redo support (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z)
+
+// In-memory undo/redo stacks. We keep a small bounded history.
+const _undoStack = [];
+const _redoStack = [];
+const _UNDO_LIMIT = 100;
+let _snapshotTimer = null;
+const _SNAPSHOT_DEBOUNCE = 500;
+
+function captureAppState() {
+    const getVal = (id) => {
+        const el = document.getElementById(id);
+        return el ? el.value : null;
+    };
+
+    const state = {
+        totalOps: Number(getVal('totalOps') || 0),
+        workerCount: Number(getVal('workerCount') || 1),
+        timeMode: getVal('timeMode') || 'total',
+        startDate: getVal('startDate') || '',
+        startTime: getVal('startTime') || '',
+        postingDate: getVal('postingDate') || '',
+        lunchStart: getVal('lunchStart') || '',
+        lunchStart2: getVal('lunchStart2') || '',
+        lunchDur: getVal('lunchDur') || '',
+        orderName: getVal('orderName') || '',
+        itemName: getVal('itemName') || '',
+        statusBefore: getVal('statusBefore') || '',
+        workExtra: getVal('workExtra') || '',
+        devRec: getVal('devRec') || '',
+        coefK: getVal('coefK') || '',
+        ops: []
+    };
+
+    const blocks = document.querySelectorAll('.op-block');
+    blocks.forEach(block => {
+        const name = block.querySelector('.op-header-input')?.value || '';
+        const dur = block.querySelector('.op-duration')?.value || '';
+        const unit = block.querySelector('.op-unit')?.value || 'min';
+        const breakVal = block.querySelector('.op-break-val')?.value || '';
+        const breakUnit = block.querySelector('.op-break-unit')?.value || 'min';
+        const workerCbs = [];
+        const cbs = block.querySelectorAll('.op-worker-checkbox');
+        cbs.forEach(cb => workerCbs.push({ w: cb.getAttribute('data-worker'), checked: !!cb.checked }));
+        state.ops.push({ name, dur, unit, breakVal, breakUnit, workers: workerCbs });
+    });
+
+    return state;
+}
+
+function restoreAppState(state) {
+    if (!state || typeof state !== 'object') return;
+    try {
+        // Top-level fields
+        if (document.getElementById('workerCount')) document.getElementById('workerCount').value = state.workerCount || 1;
+        if (document.getElementById('totalOps')) document.getElementById('totalOps').value = state.totalOps || 1;
+        if (document.getElementById('timeMode')) document.getElementById('timeMode').value = state.timeMode || 'total';
+        if (document.getElementById('startDate')) document.getElementById('startDate').value = state.startDate || '';
+        if (document.getElementById('startTime')) document.getElementById('startTime').value = state.startTime || '';
+        if (document.getElementById('postingDate')) document.getElementById('postingDate').value = state.postingDate || state.startDate || '';
+        if (document.getElementById('lunchStart')) document.getElementById('lunchStart').value = state.lunchStart || '';
+        if (document.getElementById('lunchStart2')) document.getElementById('lunchStart2').value = state.lunchStart2 || '';
+        if (document.getElementById('lunchDur')) document.getElementById('lunchDur').value = state.lunchDur || '';
+        if (document.getElementById('orderName')) document.getElementById('orderName').value = state.orderName || '';
+        if (document.getElementById('itemName')) document.getElementById('itemName').value = state.itemName || '';
+        if (document.getElementById('statusBefore')) document.getElementById('statusBefore').value = state.statusBefore || '';
+        if (document.getElementById('workExtra')) document.getElementById('workExtra').value = state.workExtra || '';
+        if (document.getElementById('devRec')) document.getElementById('devRec').value = state.devRec || '';
+        if (document.getElementById('coefK')) document.getElementById('coefK').value = state.coefK || '';
+
+        // Rebuild operation blocks to match desired count and then populate fields
+        renderFields();
+        const blocks = document.querySelectorAll('.op-block');
+        blocks.forEach((block, idx) => {
+            const row = state.ops[idx];
+            if (!row) return;
+            const nameInp = block.querySelector('.op-header-input');
+            if (nameInp) nameInp.value = row.name;
+            const durInp = block.querySelector('.op-duration');
+            if (durInp) durInp.value = row.dur;
+            const unitSel = block.querySelector('.op-unit');
+            if (unitSel) unitSel.value = row.unit || 'min';
+            const breakInp = block.querySelector('.op-break-val');
+            if (breakInp) breakInp.value = row.breakVal;
+            const breakUnit = block.querySelector('.op-break-unit');
+            if (breakUnit) breakUnit.value = row.breakUnit || 'min';
+            const cbs = block.querySelectorAll('.op-worker-checkbox');
+            cbs.forEach(cb => {
+                const w = cb.getAttribute('data-worker');
+                const found = (row.workers || []).find(x => String(x.w) === String(w));
+                if (found) cb.checked = !!found.checked;
+            });
+        });
+
+        // Refresh UI states
+        try { updateWorkerUIByTimeMode(); syncTimeUnits(); updateFirstPauseVisibility(); } catch (e) {}
+    } catch (e) {
+        console.error('restoreAppState error:', e);
+    }
+}
+
+function _pushUndoSnapshot() {
+    try {
+        const s = captureAppState();
+        // Avoid pushing duplicate consecutive states
+        const last = _undoStack[_undoStack.length - 1];
+        if (JSON.stringify(last) === JSON.stringify(s)) return;
+        _undoStack.push(s);
+        if (_undoStack.length > _UNDO_LIMIT) _undoStack.shift();
+        // New action clears redo stack
+        _redoStack.length = 0;
+    } catch (e) { console.debug?.('pushUndo error', e?.message); }
+}
+
+function scheduleSnapshotDebounced() {
+    if (_snapshotTimer) clearTimeout(_snapshotTimer);
+    _snapshotTimer = setTimeout(() => { _pushUndoSnapshot(); _snapshotTimer = null; }, _SNAPSHOT_DEBOUNCE);
+}
+
+function undo() {
+    if (_undoStack.length === 0) return;
+    try {
+        const current = captureAppState();
+        _redoStack.push(current);
+        const prev = _undoStack.pop();
+        restoreAppState(prev);
+    } catch (e) { console.error('undo error', e); }
+}
+
+function redo() {
+    if (_redoStack.length === 0) return;
+    try {
+        const curr = captureAppState();
+        _undoStack.push(curr);
+        const next = _redoStack.pop();
+        restoreAppState(next);
+    } catch (e) { console.error('redo error', e); }
+}
+
+// Initial snapshot after load
+window.addEventListener('load', () => { try { _pushUndoSnapshot(); } catch (e) {} });
+
+// Keyboard shortcuts: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Y or Ctrl+Shift+Z = redo
+document.addEventListener('keydown', (e) => {
+    const key = (e.key || '').toLowerCase();
+    const mod = (e.ctrlKey || e.metaKey);
+    if (!mod) return;
+    if (!e.shiftKey && key === 'z') {
+        e.preventDefault();
+        undo();
+    } else if (key === 'y' || (e.shiftKey && key === 'z')) {
+        e.preventDefault();
+        redo();
+    }
+});
+
+// Debounced snapshots for user edits: inputs inside the main container and some top-level controls
+const _snapshotTargets = ['totalOps','workerCount','timeMode','startDate','startTime','postingDate','lunchStart','lunchStart2','lunchDur','orderName','itemName','statusBefore','workExtra','devRec','coefK'];
+_snapshotTargets.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', scheduleSnapshotDebounced);
+    el.addEventListener('change', scheduleSnapshotDebounced);
+});
+// delegate input events inside ops container
+const _opsContainer = document.getElementById('fieldsContainer');
+if (_opsContainer) {
+    _opsContainer.addEventListener('input', scheduleSnapshotDebounced, true);
+    _opsContainer.addEventListener('change', scheduleSnapshotDebounced, true);
+}
+
 // === ЭКСПОРТ В EXCEL ===
 function setupExcelExport() {
     document.getElementById('clearHistoryBtn').addEventListener('click', clearHistoryData);
@@ -1451,15 +1662,19 @@ async function exportToExcel() {
     }
 
     let xmlBody = '';
+    // Track absolute row number within the sheet to build absolute R1C1 ranges for INDEX/MATCH
+    let sheetRow = 0;
     // Вставляем строку авторства в самый верх и пустую строку после неё
     xmlBody += `
     <Row ss:Height="50" ss:AutoFitHeight="0">
-        <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sAuthor"><Data ss:Type="String">${escapeXml('Создано при помощи калькулятора для ленивых. Ленивым от ленивого. 🙂')}</Data></Cell>
+        <Cell ss:Index="2" ss:MergeAcross="13" ss:StyleID="sAuthor"><Data ss:Type="String">${escapeXml('Создано при помощи калькулятора для ленивых. Ленивым от ленивого. 🙂')}</Data></Cell>
     </Row>
     <Row>
-        <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sTextLocked"><Data ss:Type="String"></Data></Cell>
+        <Cell ss:Index="2" ss:MergeAcross="13" ss:StyleID="sTextLocked"><Data ss:Type="String"></Data></Cell>
     </Row>
     `;
+    // Two rows emitted above
+    sheetRow += 2;
     let previousEntryData = null;
     const entriesArray = Array.from(entries).reverse();
 
@@ -1487,10 +1702,11 @@ async function exportToExcel() {
 
         xmlBody += `
         <Row>
-            <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sTitle"><Data ss:Type="String">${escapeXml(excelSanitizeCell(data.title))}</Data></Cell>
+            <Cell ss:Index="2" ss:MergeAcross="13" ss:StyleID="sTitle"><Data ss:Type="String">${escapeXml(excelSanitizeCell(data.title))}</Data></Cell>
         </Row>
         <Row>
-            <Cell ss:Index="2" ss:StyleID="sHeader"><Data ss:Type="String">№ ПДТВ</Data></Cell>
+            <Cell ss:Index="2" ss:StyleID="sHeader"><Data ss:Type="String">№</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">ПДТВ</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Операция</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Обед?</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Пауза перед началом операции</Data></Cell>
@@ -1502,10 +1718,29 @@ async function exportToExcel() {
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Время Начала</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Дата конца</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Время конца</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">INDEX</Data></Cell>
         </Row>
         `;
+        // Added two rows for title+header
+        sheetRow += 2;
 
-        data.rows.forEach((r, idx) => {
+        // Preserve web order (by operation number); stable sort by opNumeric then workerIndex
+        let rowsForExport = data.rows.slice().sort((a, b) => {
+            const na = (a.opNumeric ?? a.opIdx) || 0;
+            const nb = (b.opNumeric ?? b.opIdx) || 0;
+            if (na !== nb) return na - nb;
+            const wa = (a.workerIndex || 1);
+            const wb = (b.workerIndex || 1);
+            return wa - wb;
+        });
+
+        // Compute absolute row range for the data rows of this entry (used for INDEX/MATCH ranges)
+        const dataStartRow = sheetRow + 1;
+        const dataEndRow = dataStartRow + rowsForExport.length - 1;
+
+        // Map to remember row index (within this entry) for a given opNumeric+workerIndex
+        const rowPosMap = {};
+        rowsForExport.forEach((r, idx) => {
             const startXml = formatXmlDate(new Date(r.startObj));
             const endXml = formatXmlDate(new Date(r.endObj));
             const postingXml = (r.postingDateIso) ? formatXmlDate(new Date(String(r.postingDateIso) + 'T00:00:00')) : startXml;
@@ -1519,43 +1754,49 @@ async function exportToExcel() {
             let durCell;
             // Используем opNumeric если есть, иначе fallback на opIdx для старых записей
             const curOpNum = r.opNumeric ?? r.opIdx;
-            const prevRowOpNum = (idx > 0) ? (data.rows[idx - 1].opNumeric ?? data.rows[idx - 1].opIdx) : -1;
+            const prevRowOpNum = (idx > 0) ? (rowsForExport[idx - 1].opNumeric ?? rowsForExport[idx - 1].opIdx) : -1;
             
-            if (curOpNum === prevRowOpNum) {
-                durCell = `<Cell ss:StyleID="sDurLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">${r.durVal}</Data></Cell>`;
-            } else {
+            // If the saved calculation used 'individual' mode, make all duration cells editable in Excel
+            if (data.timeMode === 'individual') {
                 durCell = `<Cell ss:StyleID="sDurEditable"><Data ss:Type="Number">${r.durVal}</Data></Cell>`;
+            } else {
+                if (curOpNum === prevRowOpNum) {
+                    durCell = `<Cell ss:StyleID="sDurLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">${r.durVal}</Data></Cell>`;
+                } else {
+                    durCell = `<Cell ss:StyleID="sDurEditable"><Data ss:Type="Number">${r.durVal}</Data></Cell>`;
+                }
             }
 
-            // Ячейка паузы:
-            // - Первая операция первой записи: пустая, защищённая (пауза не нужна)
-            // - Первая операция второй+ записей: значение из веб, редактируемая (worker 1) или =R[-1]C
-            // - Вторая+ операции всех записей: 0 по умолчанию, редактируемая (только worker 1 в операции)
+            // Ячейка паузы — переносим реальное значение паузы для каждой операции/строки
+            // Правила защиты:
+            // - Первая операция первой записи: защищённая (locked) — значение из данных (обычно 0)
+            // - Первая операция второй+ записей: значение из данных, editable для первого исполнителя, locked (formula) для остальных
+            // - Вторая+ операции всех записей: значение из данных (обычно 0), editable для первого исполнителя, locked (formula) для остальных
             const isFirstEntryFirstOp = (entryIndex === 0 && curOpNum === 1);
             const isFirstOpOfEntry = (curOpNum === 1);
             const isFirstWorkerOfOp = (curOpNum !== prevRowOpNum);
-            
+
             let pauseCell;
             if (isFirstEntryFirstOp) {
-                // Первая операция первой записи - пауза не нужна
+                // Первая операция первой записи - защищённая ячейка с реальным значением паузы
                 if (r.workerIndex === 1) {
-                    pauseCell = `<Cell ss:StyleID="sTimeLocked"><Data ss:Type="Number">0</Data></Cell>`;
+                    pauseCell = `<Cell ss:StyleID="sTimeLocked"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 } else {
-                    pauseCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">0</Data></Cell>`;
+                    pauseCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 }
             } else if (isFirstOpOfEntry) {
-                // Первая операция второй+ записей - значение из веб
+                // Первая операция второй+ записей - значение из данных
                 if (r.workerIndex === 1) {
                     pauseCell = `<Cell ss:StyleID="sTimeEditable"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 } else {
                     pauseCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 }
             } else {
-                // Вторая+ операции всех записей - 0 по умолчанию, редактируемая
+                // Вторая+ операции всех записей - значение из данных
                 if (isFirstWorkerOfOp) {
-                    pauseCell = `<Cell ss:StyleID="sTimeEditable"><Data ss:Type="Number">0</Data></Cell>`;
+                    pauseCell = `<Cell ss:StyleID="sTimeEditable"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 } else {
-                    pauseCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">0</Data></Cell>`;
+                    pauseCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 }
             }
 
@@ -1585,29 +1826,79 @@ async function exportToExcel() {
                     startTimeCell = `<Cell ss:StyleID="sTimeEditable"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                 }
             } else {
-                if (curOpNum === prevRowOpNum) {
-                    startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
-                } else {
-                    // Начало операции (кроме первой) ссылается на конец предыдущей + пауза.
-                    // Но если результат попадает в обед - сдвигаем на конец обеда.
-                    const l1ValStart = `TIME(${lh},${lm},0)`;
-                    const l1EndStart = `(TIME(${lh},${lm},0)+TIME(0,${ld},0))`;
-                    // RC[-6] = пауза текущей строки (столбец E, Пауза)
-                    const rawTimeWithPause = `(R[-1]C[2]+RC[-6])`;
-                    // Условие: (prevEnd + pause) >= lunchStart AND (prevEnd + pause) < lunchEnd => сдвиг на lunchEnd
-                    const startShiftCond1 = `AND(${rawTimeWithPause}>=${l1ValStart}, ${rawTimeWithPause}<${l1EndStart})`;
-                    let startFormula;
-                    const hasLunch2Local = !(lh2 === 0 && lm2 === 0);
-                    if (hasLunch2Local) {
-                        const l2ValStart = `TIME(${lh2},${lm2},0)`;
-                        const l2EndStart = `(TIME(${lh2},${lm2},0)+TIME(0,${ld},0))`;
-                        const shifted1 = `IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause})`;
-                        const startShiftCond2 = `AND(${shifted1}>=${l2ValStart}, ${shifted1}<${l2EndStart})`;
-                        startFormula = `=MOD(IF(${startShiftCond2},${l2EndStart},${shifted1}),1)`;
+                // For individual mode try to locate previous operation for the same worker using INDEX/MATCH
+                if (data.timeMode === 'individual') {
+                    if ((curOpNum || 0) > 1) {
+                        const prevKey = `${(curOpNum - 1)}_${r.workerIndex || 1}`;
+                        const keyCol = 15; // helper key column (_KEY) appended after end time (end time is col 14)
+                        const endCol = 14;
+                        const keyRange = `R${dataStartRow}C${keyCol}:R${dataEndRow}C${keyCol}`;
+                        const endRange = `R${dataStartRow}C${endCol}:R${dataEndRow}C${endCol}`;
+                        const lookupExpr = `INDEX(${endRange}, MATCH("${prevKey}", ${keyRange}, 0))`;
+                        const l1ValStart = `TIME(${lh},${lm},0)`;
+                        const l1EndStart = `(TIME(${lh},${lm},0)+TIME(0,${ld},0))`;
+                        const rawTimeWithPause = `(${lookupExpr}+RC[-6])`;
+                        const startShiftCond1 = `AND(${rawTimeWithPause}>=${l1ValStart}, ${rawTimeWithPause}<${l1EndStart})`;
+                        let startFormula;
+                        const hasLunch2Local = !(lh2 === 0 && lm2 === 0);
+                        if (hasLunch2Local) {
+                            const l2ValStart = `TIME(${lh2},${lm2},0)`;
+                            const l2EndStart = `(TIME(${lh2},${lm2},0)+TIME(0,${ld},0))`;
+                            const shifted1 = `IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause})`;
+                            const startShiftCond2 = `AND(${shifted1}>=${l2ValStart}, ${shifted1}<${l2EndStart})`;
+                            startFormula = `=MOD(IF(${startShiftCond2},${l2EndStart},${shifted1}),1)`;
+                        } else {
+                            startFormula = `=MOD(IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause}),1)`;
+                        }
+                        startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                     } else {
-                        startFormula = `=MOD(IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause}),1)`;
+                        // no previous op number -> fallback to previous-row logic
+                        if (curOpNum === prevRowOpNum) {
+                            startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
+                        } else {
+                            const l1ValStart = `TIME(${lh},${lm},0)`;
+                            const l1EndStart = `(TIME(${lh},${lm},0)+TIME(0,${ld},0))`;
+                            const rawTimeWithPause = `(R[-1]C[2]+RC[-6])`;
+                            const startShiftCond1 = `AND(${rawTimeWithPause}>=${l1ValStart}, ${rawTimeWithPause}<${l1EndStart})`;
+                            let startFormula;
+                            const hasLunch2Local = !(lh2 === 0 && lm2 === 0);
+                            if (hasLunch2Local) {
+                                const l2ValStart = `TIME(${lh2},${lm2},0)`;
+                                const l2EndStart = `(TIME(${lh2},${lm2},0)+TIME(0,${ld},0))`;
+                                const shifted1 = `IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause})`;
+                                const startShiftCond2 = `AND(${shifted1}>=${l2ValStart}, ${shifted1}<${l2EndStart})`;
+                                startFormula = `=MOD(IF(${startShiftCond2},${l2EndStart},${shifted1}),1)`;
+                            } else {
+                                startFormula = `=MOD(IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause}),1)`;
+                            }
+                            startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
+                        }
                     }
-                    startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
+                } else {
+                    if (curOpNum === prevRowOpNum) {
+                        startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
+                    } else {
+                        // Начало операции (кроме первой) ссылается на конец предыдущей + пауза.
+                        // Но если результат попадает в обед - сдвигаем на конец обеда.
+                        const l1ValStart = `TIME(${lh},${lm},0)`;
+                        const l1EndStart = `(TIME(${lh},${lm},0)+TIME(0,${ld},0))`;
+                        // RC[-6] = пауза текущей строки (столбец E, Пауза)
+                        const rawTimeWithPause = `(R[-1]C[2]+RC[-6])`;
+                        // Условие: (prevEnd + pause) >= lunchStart AND (prevEnd + pause) < lunchEnd => сдвиг на lunchEnd
+                        const startShiftCond1 = `AND(${rawTimeWithPause}>=${l1ValStart}, ${rawTimeWithPause}<${l1EndStart})`;
+                        let startFormula;
+                        const hasLunch2Local = !(lh2 === 0 && lm2 === 0);
+                        if (hasLunch2Local) {
+                            const l2ValStart = `TIME(${lh2},${lm2},0)`;
+                            const l2EndStart = `(TIME(${lh2},${lm2},0)+TIME(0,${ld},0))`;
+                            const shifted1 = `IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause})`;
+                            const startShiftCond2 = `AND(${shifted1}>=${l2ValStart}, ${shifted1}<${l2EndStart})`;
+                            startFormula = `=MOD(IF(${startShiftCond2},${l2EndStart},${shifted1}),1)`;
+                        } else {
+                            startFormula = `=MOD(IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause}),1)`;
+                        }
+                        startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
+                    }
                 }
             }
 
@@ -1668,8 +1959,8 @@ async function exportToExcel() {
             // Determine numericness for opIdx and worker to avoid Excel 'number stored as text' warnings
             const opIdxNum = Number(String(r.opIdx).replaceAll("'", ""));
             const opIdxCell = Number.isFinite(opIdxNum) && String(opIdxNum) !== 'NaN'
-                ? `<Cell ss:Index="2" ss:StyleID="sBorderLocked"><Data ss:Type="Number">${opIdxNum}</Data></Cell>`
-                : `<Cell ss:Index="2" ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(String(r.opIdx))}</Data></Cell>`;
+                ? `<Cell ss:Index="3" ss:StyleID="sBorderLocked"><Data ss:Type="Number">${opIdxNum}</Data></Cell>`
+                    : `<Cell ss:Index="3" ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(String(r.opIdx))}</Data></Cell>`;
 
             const workerRaw = String(r.worker || '');
             const workerNum = Number(workerRaw.replaceAll("'", ""));
@@ -1679,6 +1970,7 @@ async function exportToExcel() {
 
             xmlBody += `
             <Row>
+                <Cell ss:Index="2" ss:StyleID="sBorderLocked"><Data ss:Type="Number">${idx + 1}</Data></Cell>
                 ${opIdxCell}
                 <Cell ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(r.name))}</Data></Cell>
                 <Cell ss:StyleID="sIconLocked" ss:Formula="${escapeXml(formulaIcon)}"><Data ss:Type="String">${r.crossedLunch ? '🍽️' : ''}</Data></Cell>
@@ -1690,18 +1982,25 @@ async function exportToExcel() {
                 <Cell ss:StyleID="sDateLocked"><Data ss:Type="DateTime">${startXml}</Data></Cell>
                 ${startTimeCell}
                 <Cell ss:StyleID="sDateLocked"><Data ss:Type="DateTime">${endXml}</Data></Cell>
-                <Cell ss:StyleID="sTimeLocked" ss:Formula="${escapeXml(formulaEnd)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>
-            </Row>
-            `;
+                    <Cell ss:StyleID="sTimeLocked" ss:Formula="${escapeXml(formulaEnd)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>
+                    <Cell ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(String(curOpNum) + '_' + String(r.workerIndex || 1))}</Data></Cell>
+                </Row>
+                `;
+                // remember position of this op+worker within the exported rows (index relative to start of this entry)
+                rowPosMap[`${curOpNum}_${r.workerIndex || 1}`] = idx;
+                // advance absolute sheet row counter
+                sheetRow += 1;
         });
 
-        xmlBody += `
-        <Row>
-            <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sTitle"><Data ss:Type="String">Z7</Data></Cell>
-        </Row>
-        `;
+            xmlBody += `
+            <Row>
+                <Cell ss:Index="2" ss:MergeAcross="13" ss:StyleID="sTitle"><Data ss:Type="String">Z7</Data></Cell>
+            </Row>
+            `;
+            // one row for Z7 title
+            sheetRow += 1;
 
-        data.z7.forEach((line, zi) => {
+            data.z7.forEach((line, zi) => {
             // Excel cannot auto-fit height for merged cells reliably,
             // so estimate row height from text length and set ss:Height for Z7 rows.
             const sanitizedZ7 = excelSanitizeCell(line);
@@ -1716,15 +2015,18 @@ async function exportToExcel() {
 
             xmlBody += `
             <Row${heightAttr}>
-                <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(sanitizedZ7)}</Data></Cell>
+                    <Cell ss:Index="2" ss:MergeAcross="13" ss:StyleID="sZ7Locked"><Data ss:Type="String">${escapeXml(sanitizedZ7)}</Data></Cell>
             </Row>
             <Row>
-                <Cell ss:Index="2" ss:MergeAcross="11" ss:StyleID="sBorderLeftLocked"><Data ss:Type="String"></Data></Cell>
+                <Cell ss:Index="2" ss:MergeAcross="13" ss:StyleID="sZ7Locked"><Data ss:Type="String"></Data></Cell>
             </Row>
             `;
+            // two rows per Z7 line
+            sheetRow += 2;
         });
-
         xmlBody += `<Row></Row>`;
+        // final spacer row
+        sheetRow += 1;
         previousEntryData = data;
     });
 
@@ -1791,6 +2093,13 @@ function buildExcelXml(xmlBody, sheetName) {
      <Protection ss:Protected="1"/>
     </Style>
     <Style ss:ID="sBorderLeftLocked">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="12"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sZ7Locked">
      <Alignment ss:Horizontal="Left" ss:Vertical="Center" ss:WrapText="1"/>
      <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
      <Font ss:Size="12"/>
@@ -1845,20 +2154,21 @@ function buildExcelXml(xmlBody, sheetName) {
  </Styles>
  <Worksheet ss:Name="${escapeXml(sheetName)}" ss:Protected="1" x:Password="">
     <Table>
-    <Column ss:Width="40" ss:StyleID="sTextLocked"/> <!-- Margin (Column A) -->
-    <Column ss:Width="90" ss:StyleID="sTextLocked"/> <!-- № ( widened to fit 8-digit numbers ) -->
-    <Column ss:Width="300" ss:StyleID="sTextLocked"/> <!-- Operation -->
-    <Column ss:Width="50" ss:StyleID="sTextLocked"/> <!-- Lunch? -->
-    <Column ss:Width="70" ss:StyleID="sTextLocked"/> <!-- Pause (New) -->
-    <Column ss:Width="140" ss:StyleID="sTextLocked"/> <!-- Duration -->
-    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- Posting D -->
-    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- Worker -->
-    <Column ss:Width="50" ss:StyleID="sTextLocked"/> <!-- - (empty) -->
-    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- Start D -->
-    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- Start T -->
-    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- End D -->
-    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- End T -->
-    <Column ss:Width="40" ss:StyleID="sTextLocked"/> <!-- Column N (extra) -->
+    <Column ss:Width="10" ss:StyleID="sTextLocked"/> <!-- A -->
+    <Column ss:Width="20" ss:StyleID="sTextLocked"/> <!-- B -->
+    <Column ss:Width="50" ss:StyleID="sTextLocked"/> <!-- C -->
+    <Column ss:Width="400" ss:StyleID="sTextLocked"/> <!-- D -->
+    <Column ss:Width="40" ss:StyleID="sTextLocked"/> <!-- E -->
+    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- F -->
+    <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- G -->
+    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- H -->
+    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- I -->
+    <Column ss:Width="20" ss:StyleID="sTextLocked"/> <!-- J -->
+    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- K -->
+    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- L -->
+    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- M -->
+    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- N -->
+    <Column ss:Width="50" ss:StyleID="sTextLocked"/> <!-- O -->
      ${xmlBody}
     </Table>
   <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
@@ -1934,7 +2244,8 @@ function getCardData() {
         name: sanitizeStrict(stripOrdinalPrefix(b.querySelector('.op-header-input').value), 200),
         dur: Math.max(0, Number.parseFloat(b.querySelector('.op-duration').value) || 0),
         unit: b.querySelector('.op-unit').value,
-        hasBreak: b.querySelector('.order-pause-toggle').checked,
+        // hasBreak: derive from break value (no checkbox now)
+        hasBreak: (Math.max(0, Number.parseFloat(b.querySelector('.op-break-val').value) || 0) > 0),
         breakVal: Math.max(0, Number.parseFloat(b.querySelector('.op-break-val').value) || 0),
         breakUnit: b.querySelector('.op-break-unit').value
     }));
@@ -1969,9 +2280,10 @@ function setCardData(steps) {
         }
 
         if (s.hasBreak) {
-            const chk = blocks[i].querySelector('.order-pause-toggle');
-            chk.checked = true;
-            chk.dispatchEvent(new Event('change'));
+            const breakGroup = blocks[i].querySelector('.break-container');
+            try {
+                if (breakGroup) breakGroup.style.display = 'flex';
+            } catch (ee) {}
             blocks[i].querySelector('.op-break-val').value = Math.max(0, Number.parseFloat(s.breakVal) || 0);
             blocks[i].querySelector('.op-break-unit').value = s.breakUnit || 'min';
         }
@@ -2141,12 +2453,14 @@ document.getElementById('saveCardBtn').addEventListener('click', async () => {
     
     if (!name) return;
 
-    name = sanitizeInput(name, 100);
-    if (name.length === 0) {
+    // Строгая санитизация имени шаблона: ограничение по длине и очистка запрещённых символов
+    name = sanitizeStrict(String(name), 100).trim();
+    // Блокируем потенциально опасные имена ключей (prototype pollution и т.п.)
+    if (name.length === 0 || name.includes('__proto__') || name.includes('constructor') || name.includes('prototype')) {
         if (tauriDialog?.message) {
-            await tauriDialog.message('Название не может быть пустым', { title: 'Ошибка', kind: 'error' });
+            await tauriDialog.message('Название не может быть пустым или содержать недопустимые последовательности', { title: 'Ошибка', kind: 'error' });
         } else {
-            alert('Название не может быть пусто');
+            alert('Название не может быть пустым или содержать недопустимые последовательности');
         }
         return;
     }
@@ -2773,6 +3087,50 @@ if (workerCountEl) {
         const modal = document.getElementById('workersModal');
         if (modal && modal.classList.contains('active')) {
             renderWorkersInputList();
+        }
+        // Update per-operation worker checkboxes to reflect new count
+        try { syncOpWorkersToCount(); } catch (ee) {}
+    });
+}
+
+function syncOpWorkersToCount() {
+    const count = Number.parseInt(document.getElementById('workerCount')?.value || '1', 10) || 1;
+    const blocks = Array.from(document.querySelectorAll('.op-block'));
+    blocks.forEach((block, idx) => {
+        const box = block.querySelector('.op-workers-box');
+        if (!box) return;
+        const existing = Array.from(box.querySelectorAll('.op-worker-item'));
+        const cur = existing.length;
+        if (cur < count) {
+            for (let w = cur + 1; w <= count; w++) {
+                const id = `op_${idx+1}_worker_${w}`;
+                const cb = createEl('input', { type: 'checkbox', className: 'op-worker-checkbox', id, 'data-worker': String(w) });
+                cb.checked = true;
+                const lbl = createEl('label', { htmlFor: id, className: 'op-worker-label' }, String(w));
+                const wrapper = createEl('span', { className: 'op-worker-item' });
+                wrapper.append(cb, lbl);
+                box.append(wrapper);
+                cb.addEventListener('change', (e) => {
+                    if (!cb.checked) {
+                        try {
+                            const blocks2 = Array.from(document.querySelectorAll('.op-block'));
+                            const curIdx2 = blocks2.indexOf(block);
+                            if (curIdx2 >= 0) {
+                                for (let bi = curIdx2 + 1; bi < blocks2.length; bi++) {
+                                    const other = blocks2[bi].querySelector(`.op-worker-checkbox[data-worker="${w}"]`);
+                                    if (other) other.checked = false;
+                                }
+                            }
+                        } catch (err) { console.debug?.('propagate worker checkbox change error', err?.message); }
+                    }
+                });
+            }
+        } else if (cur > count) {
+            // remove extra
+            for (let i = cur; i > count; i--) {
+                const item = existing[i-1];
+                if (item) box.removeChild(item);
+            }
         }
     });
 }

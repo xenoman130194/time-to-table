@@ -50,7 +50,14 @@ body {
 }
 
 #techCardSelect {
-    flex-grow: 1;
+    /* Allow the select to shrink inside the flex container and not force overflow
+       Use min-width:0 so flexbox can shrink it; show ellipsis for long selected text */
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* Текстовые поля в ряд */
@@ -290,8 +297,11 @@ input:focus, select:focus {
 .op-header-input { 
     border: 1px solid transparent; 
     font-weight: 600; 
+    /* Take all available horizontal space between the op number and controls */
+    flex: 1 1 auto;
     width: 100%;
-    max-width: 300px; 
+    min-width: 0;
+    max-width: none;
     padding: 6px; 
     background: transparent; 
     transition: 0.2s; 
@@ -303,11 +313,49 @@ input:focus, select:focus {
     background: #fff; 
 }
 
+.op-name-col { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width:0; }
+.op-workers-wrapper { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.op-workers-label { font-size: 12px; color: #6b7280; font-weight: 600; }
+/* Worker checkbox grid: show up to 5 items per row, additional items wrap to next row */
+.op-workers-box { display: grid; grid-template-columns: repeat(5, auto); gap: 6px; align-items: center; }
+.op-worker-item { display: inline-flex; align-items: center; gap: 4px; }
+.op-workers-all { font-size: 12px; color: #6b7280; font-weight: 600; padding-left: 4px; }
+/* Boxed appearance for the 'Все.' indicator to match the small number box */
+.op-workers-all {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    padding: 6px 10px;
+    background: #f1f5f9;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+    color: #374151;
+    font-family: 'Consolas', 'Courier New', monospace;
+}
+
+/* Small boxed placeholders for 'В Excel' shown when individual mode is off for durations/pauses */
+.op-dur-all, .op-break-all {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 60px;
+    padding: 6px 10px;
+    background: #f1f5f9;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+    color: #374151;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 13px;
+}
+.op-worker-label { font-family: 'Consolas', 'Courier New', monospace; font-size: 12px; padding: 2px 4px; background: #f1f5f9; border-radius: 4px; }
+.op-worker-checkbox { width: 14px; height: 14px; }
+
 .op-controls { 
     display: flex; 
     align-items: center; 
     gap: 20px; 
-    flex-grow: 1; 
+    flex: 0 0 auto; /* don't grab remaining space — keep controls to content width */
     justify-content: flex-end; 
 }
 
@@ -572,6 +620,7 @@ th, td {
     border: 1px solid #e5e7eb; 
     padding: 10px 12px; 
     text-align: center; 
+    vertical-align: middle;
     white-space: nowrap; 
 }
 th { 
@@ -614,6 +663,26 @@ tr:nth-child(even) {
     text-align: left; 
     white-space: pre-wrap; 
     line-height: 1.6;
+}
+
+/* Truncate the "Операция" column in split tables to max ~15 characters with ellipsis */
+.split-table-wrapper table th:nth-child(3),
+.split-table-wrapper table td:nth-child(3) {
+    max-width: 15ch;
+    white-space: nowrap; /* prevent wrapping for visual truncation */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
+}
+
+/* Apply same truncation for operation column inside history entries */
+#historyList table th:nth-child(3),
+#historyList table td:nth-child(3) {
+    max-width: 15ch;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
 }
 
 .z7-line-item { 
