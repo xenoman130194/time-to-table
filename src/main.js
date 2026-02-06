@@ -216,6 +216,137 @@ function validateNumber(value, min, max) {
     return Math.max(min, Math.min(max, num));
 }
 
+// === ОБЩИЕ ХЕЛПЕРЫ (устранение дублирования) ===
+
+// Универсальный диалог подтверждения (Tauri + fallback)
+async function confirmAction(message, title = 'Подтверждение') {
+    if (tauriDialog?.confirm) {
+        try {
+            return await tauriDialog.confirm(message, { title, kind: 'warning' });
+        } catch (e) {
+            console.error('Tauri confirm error:', e);
+            return globalThis.confirm(message);
+        }
+    }
+    return globalThis.confirm(message);
+}
+
+// Универсальное сообщение (Tauri + fallback)
+async function showMessage(message, title = 'Информация', kind = 'info') {
+    if (tauriDialog?.message) {
+        try {
+            await tauriDialog.message(message, { title, kind });
+            return;
+        } catch (e) { console.error('Tauri message error:', e); }
+    }
+    alert(message);
+}
+
+// Определяет суффикс единицы измерения для заголовка таблицы
+function getHeaderUnitSuffix(rows) {
+    const uniqueUnits = [...new Set(rows.map(r => r.unit || 'min'))];
+    if (uniqueUnits.length === 1) {
+        if (uniqueUnits[0] === 'min') return ' (мин)';
+        if (uniqueUnits[0] === 'hour') return ' (час)';
+    }
+    return '';
+}
+
+// Создаёт DOM-элемент Z7 таблицы
+function createZ7TableElement(z7Lines) {
+    const z7Table = createEl('table', { className: 'history-z7', style: 'width:100%; border-collapse:collapse;' });
+    const z7Head = createEl('thead');
+    const thZ7 = createEl('th', { className: 'z7-header-common', colspan: '12' }, 'Z7');
+    const z7HeadTr = createEl('tr');
+    z7HeadTr.append(thZ7);
+    z7Head.append(z7HeadTr);
+    const z7Body = createEl('tbody');
+    const z7Tr = createEl('tr');
+    const z7Td = createEl('td');
+    z7Lines.forEach(line => z7Td.append(createEl('div', { className: 'z7-line-item' }, line)));
+    z7Tr.append(z7Td);
+    z7Body.append(z7Tr);
+    z7Table.append(z7Head, z7Body);
+    return z7Table;
+}
+
+// Общие значения по умолчанию для формы
+function getFormDefaults() {
+    const _today = new Date();
+    const _yyyy = _today.getFullYear();
+    const _mm = String(_today.getMonth() + 1).padStart(2, '0');
+    const _dd = String(_today.getDate()).padStart(2, '0');
+    const _todayStr = `${_yyyy}-${_mm}-${_dd}`;
+    return {
+        totalOps: 1, workerCount: 1, startDate: _todayStr, startTime: '08:00:00',
+        chainMode: true, lunchStart: '12:00', lunchStart2: '00:00', lunchDur: 45,
+        timeMode: 'total', resIz: '', coefK: '', orderName: '', itemName: '',
+        postingDate: _todayStr, statusBefore: 'замечаний нет', workExtra: 'нет', devRec: 'нет'
+    };
+}
+
+// Обработчик ввода только цифр
+function digitOnlyHandler(e) {
+    e.target.value = e.target.value.replaceAll(/[^0-9]/g, '');
+}
+
+// Обработчики для десятичных полей (sanitizeDecimalInput)
+function decimalInputHandler(e) {
+    e.target.value = sanitizeDecimalInput(e.target.value);
+}
+function decimalBlurHandler(e) {
+    let v = sanitizeDecimalInput(e.target.value);
+    if (v === '') v = '0';
+    if (v.endsWith('.')) v = v + '0';
+    e.target.value = v;
+}
+
+// Кнопка удаления записи истории с подтверждением
+function createHistoryDeleteButton(entryDiv) {
+    const delBtn = createEl('button', { className: 'btn-sm btn-del-history' }, 'Удалить');
+    delBtn.onclick = async () => {
+        if (await confirmAction('Удалить эту запись из истории?')) {
+            entryDiv.remove();
+            await saveHistoryToStorage();
+            updateFirstPauseVisibility();
+        }
+    };
+    return delBtn;
+}
+
+// Разблокировка контролов формы
+function unlockFormControls() {
+    const ids = [
+        { id: 'totalOps', cls: 'locked-input' },
+        { id: 'workerCount', cls: 'locked-input' },
+        { id: 'techCardSelect', cls: 'locked-input' },
+        { id: 'saveCardBtn', cls: 'locked-control' },
+        { id: 'deleteCardBtn', cls: 'locked-control' }
+    ];
+    ids.forEach(({ id, cls }) => {
+        try {
+            const el = document.getElementById(id);
+            if (el) { el.disabled = false; el.classList.remove(cls); }
+        } catch (e) {}
+    });
+}
+
+// Построение Excel формулы сдвига обеда
+function buildLunchShiftFormula(rawTimeExpr, lh, lm, lh2, lm2, ld) {
+    const l1Val = `TIME(${lh},${lm},0)`;
+    const l1End = `(TIME(${lh},${lm},0)+TIME(0,${ld},0))`;
+    const cond1 = `AND(${rawTimeExpr}>=${l1Val}, ${rawTimeExpr}<${l1End})`;
+    const hasLunch2 = !(lh2 === 0 && lm2 === 0);
+    if (hasLunch2) {
+        const l2Val = `TIME(${lh2},${lm2},0)`;
+        const l2End = `(TIME(${lh2},${lm2},0)+TIME(0,${ld},0))`;
+        const shifted1 = `IF(${cond1},${l1End},${rawTimeExpr})`;
+        const cond2 = `AND(${shifted1}>=${l2Val}, ${shifted1}<${l2End})`;
+        return `=MOD(IF(${cond2},${l2End},${shifted1}),1)`;
+    }
+    return `=MOD(IF(${cond1},${l1End},${rawTimeExpr}),1)`;
+}
+
 function validateCardData(steps) {
     if (!Array.isArray(steps)) return false;
     return steps.every(s => 
@@ -313,49 +444,26 @@ try {
 let operationFirstId = ''; // Первый 8-значный номер подтверждения
 let lastOperationIndex = null; // Индекс операции, которая будет "последней"
 
-// Ограничение ввода в поле 'Заказ' — только цифры
+// Ограничение ввода в поля 'Заказ' и 'Rиз' — только цифры
 try {
-    const orderInputEl = document.getElementById('orderName');
-    if (orderInputEl) {
-        orderInputEl.addEventListener('input', (e) => {
-            // Оставляем только цифры
-            e.target.value = e.target.value.replaceAll(/[^0-9]/g, '');
-        });
-        orderInputEl.setAttribute('inputmode', 'numeric');
-        orderInputEl.setAttribute('autocomplete', 'off');
-    }
+    ['orderName', 'resIz'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('input', digitOnlyHandler);
+            el.setAttribute('inputmode', 'numeric');
+            el.setAttribute('autocomplete', 'off');
+        }
+    });
 } catch (e) {
-    console.debug?.('Order input listener attach failed:', e?.message);
-}
-
-// Ограничение ввода в поле 'Rиз' — только цифры
-try {
-    const rizInputEl = document.getElementById('resIz');
-    if (rizInputEl) {
-        rizInputEl.addEventListener('input', (e) => {
-            e.target.value = e.target.value.replaceAll(/[^0-9]/g, '');
-        });
-        rizInputEl.setAttribute('inputmode', 'numeric');
-        rizInputEl.setAttribute('autocomplete', 'off');
-    }
-} catch (e) {
-    console.debug?.('Riz input listener attach failed:', e?.message);
+    console.debug?.('Digit-only input listeners attach failed:', e?.message);
 }
 
 // Ограничение/санитизация ввода для длительности обеда (до 5 цифр + 2 дробных)
 try {
     const lunchDurEl = document.getElementById('lunchDur');
     if (lunchDurEl) {
-        lunchDurEl.addEventListener('input', (e) => {
-            const v = sanitizeDecimalInput(e.target.value);
-            e.target.value = v;
-        });
-        lunchDurEl.addEventListener('blur', (e) => {
-            let v = sanitizeDecimalInput(e.target.value);
-            if (v === '') v = '0';
-            if (v.endsWith('.')) v = v + '0';
-            e.target.value = v;
-        });
+        lunchDurEl.addEventListener('input', decimalInputHandler);
+        lunchDurEl.addEventListener('blur', decimalBlurHandler);
         lunchDurEl.setAttribute('inputmode', 'decimal');
         lunchDurEl.setAttribute('autocomplete', 'off');
     }
@@ -535,25 +643,7 @@ function restoreHistoryFromStorage() {
 
                 const rightSpan = createEl('span', { style: 'display:flex; align-items:center;' });
                 const infoText = createEl('span', { style: 'font-size:12px' }, ` Строк: ${data.rows.length}`);
-                const delBtn = createEl('button', { className: 'btn-sm btn-del-history' }, 'Удалить');
-                delBtn.onclick = async () => {
-                    let confirmed = false;
-                    if (tauriDialog?.confirm) {
-                        try {
-                            confirmed = await tauriDialog.confirm('Удалить эту запись из истории?', { title: 'Подтверждение', kind: 'warning' });
-                        } catch (e) {
-                            console.error('Tauri confirm error:', e);
-                            confirmed = globalThis.confirm('Удалить эту запись из истории?');
-                        }
-                    } else {
-                        confirmed = globalThis.confirm('Удалить эту запись из истории?');
-                    }
-                    if (confirmed) {
-                        entryDiv.remove();
-                        await saveHistoryToStorage();
-                        updateFirstPauseVisibility();
-                    }
-                };
+                const delBtn = createHistoryDeleteButton(entryDiv);
                 rightSpan.append(infoText, delBtn);
                 header.append(leftSpan, rightSpan);
                 
@@ -562,12 +652,7 @@ function restoreHistoryFromStorage() {
                 const trHead = createEl('tr', { style: 'background:#eee;' });
                 
                 // Определяем единицу измерения для заголовка
-                let restoreHeaderUnit = "";
-                const restoreUniqueUnits = [...new Set(data.rows.map(r => r.unit || 'min'))];
-                if (restoreUniqueUnits.length === 1) {
-                    if (restoreUniqueUnits[0] === 'min') restoreHeaderUnit = " (мин)";
-                    else if (restoreUniqueUnits[0] === 'hour') restoreHeaderUnit = " (час)";
-                }
+                const restoreHeaderUnit = getHeaderUnitSuffix(data.rows);
                 
                 ['№', 'ПДТВ', 'Операция', 'Обед?', 'Пауза', `ФактРабота${restoreHeaderUnit}`, 'Дата проводки', 'Исполнитель', 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
                     trHead.append(createEl('th', {}, text));
@@ -595,20 +680,7 @@ function restoreHistoryFromStorage() {
                 });
                 table.append(thead, tbody);
 
-                const z7Table = createEl('table', { className: 'history-z7', style: 'width:100%; border-collapse:collapse;' });
-                const z7Head = createEl('thead');
-                const thZ7 = createEl('th', { className: 'z7-header-common', colspan: '12' }, 'Z7');
-                const z7HeadTr = createEl('tr');
-                z7HeadTr.append(thZ7);
-                z7Head.append(z7HeadTr);
-                
-                const z7Body = createEl('tbody');
-                const z7Tr = createEl('tr');
-                const z7Td = createEl('td');
-                data.z7.forEach(line => z7Td.append(createEl('div', { className: 'z7-line-item' }, line)));
-                z7Tr.append(z7Td);
-                z7Body.append(z7Tr);
-                z7Table.append(z7Head, z7Body);
+                const z7Table = createZ7TableElement(data.z7);
                 
                 entryDiv.append(header, table, createEl('div', { style: 'height:10px' }), z7Table);
                 historyList.append(entryDiv);
@@ -623,40 +695,21 @@ function restoreHistoryFromStorage() {
 }
 
 async function clearHistoryData() {
-    let confirmed = false;
+    if (!await confirmAction('Вы уверены? Это удалит всю историю расчетов.')) return;
     
-    // Используем Tauri диалог если доступен
-    if (tauriDialog?.confirm) {
-        try {
-            confirmed = await tauriDialog.confirm('Вы уверены? Это удалит всю историю расчетов.', {
-                title: 'Подтверждение',
-                kind: 'warning'
-            });
-        } catch (e) {
-            console.error('Tauri confirm error:', e);
-            confirmed = globalThis.confirm('Вы уверены? Это удалит всю историю расчетов.');
-        }
-    } else {
-        confirmed = globalThis.confirm('Вы уверены? Это удалит всю историю расчетов.');
-    }
-    
-    if (confirmed) {
-        try {
-            const historyList = document.getElementById('historyList');
-            historyList.textContent = '';
-            await safeLocalStorageRemove('z7_history_session');
-            if (tauriDialog && tauriDialog.message) {
-                try { tauriDialog.message('История удалена', { title: 'Информация' }); } catch(e){}
-            }
-            
-            document.getElementById('startTime').value = "08:00:00";
-            
-            updateStartTimeFromHistory();
-            updateFirstPauseVisibility();
-        } catch (e) {
-            console.error('Ошибка при очистке истории:', e);
-            alert('Ошибка при очистке истории');
-        }
+    try {
+        const historyList = document.getElementById('historyList');
+        historyList.textContent = '';
+        await safeLocalStorageRemove('z7_history_session');
+        try { await showMessage('История удалена'); } catch(e){}
+        
+        document.getElementById('startTime').value = "08:00:00";
+        
+        updateStartTimeFromHistory();
+        updateFirstPauseVisibility();
+    } catch (e) {
+        console.error('Ошибка при очистке истории:', e);
+        alert('Ошибка при очистке истории');
     }
 }
 
@@ -855,17 +908,8 @@ function createOperationBlock(index) {
         autocomplete: 'off'
     });
     // Санитизация и ограничение ввода: до 5 цифр целой части и 2 дробных
-    workInput.addEventListener('input', (e) => {
-        const v = sanitizeDecimalInput(e.target.value);
-        e.target.value = v;
-    });
-    workInput.addEventListener('blur', (e) => {
-        let v = sanitizeDecimalInput(e.target.value);
-        if (v === '') v = '0';
-        // Если пользователь оставил только разделитель, дополним 0:  '10.' -> '10.0'
-        if (v.endsWith('.')) v = v + '0';
-        e.target.value = v;
-    });
+    workInput.addEventListener('input', decimalInputHandler);
+    workInput.addEventListener('blur', decimalBlurHandler);
     workGroup.append(workInput);
     // placeholder shown when mode == individual
     const workAll = createEl('div', { className: 'op-dur-all', style: 'display:none;' }, 'В Excel');
@@ -912,16 +956,8 @@ function createOperationBlock(index) {
         autocomplete: 'off'
     });
     // Санитизация и ограничение ввода: до 5 цифр целой части и 2 дробных
-    breakInput.addEventListener('input', (e) => {
-        const v = sanitizeDecimalInput(e.target.value);
-        e.target.value = v;
-    });
-    breakInput.addEventListener('blur', (e) => {
-        let v = sanitizeDecimalInput(e.target.value);
-        if (v === '') v = '0';
-        if (v.endsWith('.')) v = v + '0';
-        e.target.value = v;
-    });
+    breakInput.addEventListener('input', decimalInputHandler);
+    breakInput.addEventListener('blur', decimalBlurHandler);
     breakGroup.append(breakInput);
     const breakUnit = createEl('select', {
         className: 'op-break-unit',
@@ -1214,12 +1250,7 @@ async function generateTable() {
     const tblOps = createSubTable(['№', 'ПДТВ', 'Операция', 'Обед?', 'Пауза'], 2);
     
     // Определяем единицу измерения для заголовка ФактРабота
-    let headerUnit = "";
-    const uniqueUnits = [...new Set(dataMain.map(r => r.unit || 'min'))];
-    if (uniqueUnits.length === 1) {
-        if (uniqueUnits[0] === 'min') headerUnit = " (мин)";
-        else if (uniqueUnits[0] === 'hour') headerUnit = " (час)";
-    }
+    const headerUnit = getHeaderUnitSuffix(dataMain);
     
     const tblDur = createSubTable([`ФактРабота${headerUnit}`], 1);
     const tblPostingDate = createSubTable(['Дата проводки'], 1);
@@ -1332,25 +1363,7 @@ async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isCh
 
         const rightSpan = createEl('span', { style: 'display:flex; align-items:center;' });
         const infoText = createEl('span', { style: 'font-size:12px' }, ` Строк: ${data.length}`);
-        const delBtn = createEl('button', { className: 'btn-sm btn-del-history' }, 'Удалить');
-        delBtn.onclick = async () => {
-            let confirmed = false;
-            if (tauriDialog?.confirm) {
-                try {
-                    confirmed = await tauriDialog.confirm('Удалить эту запись из истории?', { title: 'Подтверждение', kind: 'warning' });
-                } catch (e) {
-                    console.error('Tauri confirm error:', e);
-                    confirmed = globalThis.confirm('Удалить эту запись из истории?');
-                }
-            } else {
-                confirmed = globalThis.confirm('Удалить эту запись из истории?');
-            }
-            if (confirmed) {
-                entryDiv.remove();
-                await saveHistoryToStorage();
-                updateFirstPauseVisibility();
-            }
-        };
+        const delBtn = createHistoryDeleteButton(entryDiv);
         rightSpan.append(infoText, delBtn);
         header.append(leftSpan, rightSpan);
         
@@ -1359,12 +1372,7 @@ async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isCh
         const trHead = createEl('tr', { style: 'background:#eee;' });
         
         // Определяем единицу измерения для заголовка
-        let histHeaderUnit = "";
-        const histUniqueUnits = [...new Set(data.map(r => r.unit || 'min'))];
-        if (histUniqueUnits.length === 1) {
-            if (histUniqueUnits[0] === 'min') histHeaderUnit = " (мин)";
-            else if (histUniqueUnits[0] === 'hour') histHeaderUnit = " (час)";
-        }
+        const histHeaderUnit = getHeaderUnitSuffix(data);
         
         ['№', 'ПДТВ', 'Операция', 'Обед?', 'Пауза', `ФактРабота${histHeaderUnit}`, 'Дата проводки', 'Исполнитель', '-', 'Дата Начала', 'Время Начала', 'Дата конца', 'Время конца'].forEach(text => {
             trHead.append(createEl('th', {}, text));
@@ -1393,20 +1401,7 @@ async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isCh
         });
         table.append(thead, tbody);
 
-        const z7Table = createEl('table', { className: 'history-z7', style: 'width:100%; border-collapse:collapse;' });
-        const z7Head = createEl('thead');
-        const thZ7 = createEl('th', { className: 'z7-header-common', colspan: '12' }, 'Z7');
-        const z7HeadTr = createEl('tr');
-        z7HeadTr.append(thZ7);
-        z7Head.append(z7HeadTr);
-        
-        const z7Body = createEl('tbody');
-        const z7Tr = createEl('tr');
-        const z7Td = createEl('td');
-        z7LinesArray.forEach(line => z7Td.append(createEl('div', { className: 'z7-line-item' }, line)));
-        z7Tr.append(z7Td);
-        z7Body.append(z7Tr);
-        z7Table.append(z7Head, z7Body);
+        const z7Table = createZ7TableElement(z7LinesArray);
         
         entryDiv.append(header, table, createEl('div', { style: 'height:10px' }), z7Table);
         historyList.prepend(entryDiv);
@@ -1659,11 +1654,7 @@ async function exportToExcel() {
     const entries = historyList.querySelectorAll('.history-entry');
     
     if (entries.length === 0) {
-        if (tauriDialog?.message) {
-            await tauriDialog.message('История пуста!', { title: 'Информация' });
-        } else {
-            alert("История пуста!");
-        }
+        await showMessage('История пуста!');
         return;
     }
 
@@ -1695,16 +1686,7 @@ async function exportToExcel() {
         const isChain = data.chain;
         
         // Определяем единицу измерения для заголовка
-        let headerUnit = "";
-        const uniqueUnits = [...new Set(data.rows.map(r => r.unit || 'min'))];
-        if (uniqueUnits.length === 1) {
-            if (uniqueUnits[0] === 'min') headerUnit = " (мин)";
-            else if (uniqueUnits[0] === 'hour') headerUnit = " (час)";
-        } else if (uniqueUnits.length > 1) {
-            // Если смешанные, можно не выводить или вывести (мин/час)
-            // Но лучше оставить пользователю понимание, что единицы разные
-            headerUnit = ""; 
-        }
+        const headerUnit = getHeaderUnitSuffix(data.rows);
 
         xmlBody += `
         <Row>
@@ -1826,20 +1808,7 @@ async function exportToExcel() {
                     const offset = 5 + (previousEntryData.z7.length * 2);
                     // Формула: (Конец пред. таблицы) + (Пауза этой строки), со сдвигом если попадает в обед
                     const rawTimeRef = `(R[-${offset}]C[2] + RC[-6])`;
-                    const l1ValChain = `TIME(${lh},${lm},0)`;
-                    const l1EndChain = `(TIME(${lh},${lm},0)+TIME(0,${ld},0))`;
-                    const chainShiftCond1 = `AND(${rawTimeRef}>=${l1ValChain}, ${rawTimeRef}<${l1EndChain})`;
-                    const hasLunch2Chain = !(lh2 === 0 && lm2 === 0);
-                    let chainFormula;
-                    if (hasLunch2Chain) {
-                        const l2ValChain = `TIME(${lh2},${lm2},0)`;
-                        const l2EndChain = `(TIME(${lh2},${lm2},0)+TIME(0,${ld},0))`;
-                        const shifted1 = `IF(${chainShiftCond1},${l1EndChain},${rawTimeRef})`;
-                        const chainShiftCond2 = `AND(${shifted1}>=${l2ValChain}, ${shifted1}<${l2EndChain})`;
-                        chainFormula = `=MOD(IF(${chainShiftCond2},${l2EndChain},${shifted1}),1)`;
-                    } else {
-                        chainFormula = `=MOD(IF(${chainShiftCond1},${l1EndChain},${rawTimeRef}),1)`;
-                    }
+                    const chainFormula = buildLunchShiftFormula(rawTimeRef, lh, lm, lh2, lm2, ld);
                     startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="${escapeXml(chainFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                 } else {
                     // Если первая таблица или не цепочка - время фиксировано
@@ -1855,42 +1824,16 @@ async function exportToExcel() {
                         const keyRange = `R${dataStartRow}C${keyCol}:R${dataEndRow}C${keyCol}`;
                         const endRange = `R${dataStartRow}C${endCol}:R${dataEndRow}C${endCol}`;
                         const lookupExpr = `INDEX(${endRange}, MATCH("${prevKey}", ${keyRange}, 0))`;
-                        const l1ValStart = `TIME(${lh},${lm},0)`;
-                        const l1EndStart = `(TIME(${lh},${lm},0)+TIME(0,${ld},0))`;
                         const rawTimeWithPause = `(${lookupExpr}+RC[-6])`;
-                        const startShiftCond1 = `AND(${rawTimeWithPause}>=${l1ValStart}, ${rawTimeWithPause}<${l1EndStart})`;
-                        let startFormula;
-                        const hasLunch2Local = !(lh2 === 0 && lm2 === 0);
-                        if (hasLunch2Local) {
-                            const l2ValStart = `TIME(${lh2},${lm2},0)`;
-                            const l2EndStart = `(TIME(${lh2},${lm2},0)+TIME(0,${ld},0))`;
-                            const shifted1 = `IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause})`;
-                            const startShiftCond2 = `AND(${shifted1}>=${l2ValStart}, ${shifted1}<${l2EndStart})`;
-                            startFormula = `=MOD(IF(${startShiftCond2},${l2EndStart},${shifted1}),1)`;
-                        } else {
-                            startFormula = `=MOD(IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause}),1)`;
-                        }
+                        const startFormula = buildLunchShiftFormula(rawTimeWithPause, lh, lm, lh2, lm2, ld);
                         startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                     } else {
                         // no previous op number -> fallback to previous-row logic
                         if (curOpNum === prevRowOpNum) {
                             startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="=R[-1]C"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                         } else {
-                            const l1ValStart = `TIME(${lh},${lm},0)`;
-                            const l1EndStart = `(TIME(${lh},${lm},0)+TIME(0,${ld},0))`;
                             const rawTimeWithPause = `(R[-1]C[2]+RC[-6])`;
-                            const startShiftCond1 = `AND(${rawTimeWithPause}>=${l1ValStart}, ${rawTimeWithPause}<${l1EndStart})`;
-                            let startFormula;
-                            const hasLunch2Local = !(lh2 === 0 && lm2 === 0);
-                            if (hasLunch2Local) {
-                                const l2ValStart = `TIME(${lh2},${lm2},0)`;
-                                const l2EndStart = `(TIME(${lh2},${lm2},0)+TIME(0,${ld},0))`;
-                                const shifted1 = `IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause})`;
-                                const startShiftCond2 = `AND(${shifted1}>=${l2ValStart}, ${shifted1}<${l2EndStart})`;
-                                startFormula = `=MOD(IF(${startShiftCond2},${l2EndStart},${shifted1}),1)`;
-                            } else {
-                                startFormula = `=MOD(IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause}),1)`;
-                            }
+                            const startFormula = buildLunchShiftFormula(rawTimeWithPause, lh, lm, lh2, lm2, ld);
                             startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                         }
                     }
@@ -1900,23 +1843,9 @@ async function exportToExcel() {
                     } else {
                         // Начало операции (кроме первой) ссылается на конец предыдущей + пауза.
                         // Но если результат попадает в обед - сдвигаем на конец обеда.
-                        const l1ValStart = `TIME(${lh},${lm},0)`;
-                        const l1EndStart = `(TIME(${lh},${lm},0)+TIME(0,${ld},0))`;
                         // RC[-6] = пауза текущей строки (столбец E, Пауза)
                         const rawTimeWithPause = `(R[-1]C[2]+RC[-6])`;
-                        // Условие: (prevEnd + pause) >= lunchStart AND (prevEnd + pause) < lunchEnd => сдвиг на lunchEnd
-                        const startShiftCond1 = `AND(${rawTimeWithPause}>=${l1ValStart}, ${rawTimeWithPause}<${l1EndStart})`;
-                        let startFormula;
-                        const hasLunch2Local = !(lh2 === 0 && lm2 === 0);
-                        if (hasLunch2Local) {
-                            const l2ValStart = `TIME(${lh2},${lm2},0)`;
-                            const l2EndStart = `(TIME(${lh2},${lm2},0)+TIME(0,${ld},0))`;
-                            const shifted1 = `IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause})`;
-                            const startShiftCond2 = `AND(${shifted1}>=${l2ValStart}, ${shifted1}<${l2EndStart})`;
-                            startFormula = `=MOD(IF(${startShiftCond2},${l2EndStart},${shifted1}),1)`;
-                        } else {
-                            startFormula = `=MOD(IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause}),1)`;
-                        }
+                        const startFormula = buildLunchShiftFormula(rawTimeWithPause, lh, lm, lh2, lm2, ld);
                         startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                     }
                 }
@@ -2343,27 +2272,19 @@ async function downloadExcelFile(xmlContent) {
     // Пробуем использовать Tauri API
     if (tauriDialog?.save && tauriInvoke) {
         try {
-                const filePath = await tauriDialog.save({
+            const filePath = await tauriDialog.save({
                 defaultPath: fileName,
                 filters: [{ name: 'XML', extensions: ['xml'] }]
             });
             
             if (filePath) {
                 await saveFileSecure(filePath, xmlContent);
-                if (tauriDialog?.message) {
-                    await tauriDialog.message('Файл успешно сохранён!', { title: 'Успех' });
-                } else {
-                    alert('Файл успешно сохранён!');
-                }
+                await showMessage('Файл успешно сохранён!', 'Успех');
             }
             return;
         } catch (e) {
             console.error('Ошибка сохранения:', e);
-            if (tauriDialog?.message) {
-                await tauriDialog.message(String(e), { title: 'Ошибка', kind: 'error' });
-            } else {
-                alert('Ошибка: ' + e);
-            }
+            await showMessage(String(e), 'Ошибка', 'error');
             return;
         }
     }
@@ -2490,174 +2411,81 @@ if (totalOpsEl) {
 document.getElementById('generateBtn').addEventListener('click', generateTable);
 
 document.getElementById('clearBtn').addEventListener('click', async () => {
-    let confirmed = false;
-    
-    if (tauriDialog?.confirm) {
+    if (!await confirmAction('Очистить?')) return;
+
+    // Reset form fields to defaults (like F5) but keep history
+    const defaults = getFormDefaults();
+
+    try {
+        // If user has saved a config in localStorage, prefer restoring it for these controls
+        let cfg = null;
+        try { cfg = JSON.parse(localStorage.getItem(CONFIG_KEY) || 'null'); } catch (ee) { cfg = null; }
+
+        document.getElementById('totalOps').value = defaults.totalOps;
+        document.getElementById('workerCount').value = defaults.workerCount;
+        document.getElementById('startDate').value = defaults.startDate;
         try {
-            confirmed = await tauriDialog.confirm('Очистить?', {
-                title: 'Подтверждение',
-                kind: 'warning'
-            });
-        } catch (e) {
-            confirmed = globalThis.confirm('Очистить?');
-        }
-    } else {
-        confirmed = globalThis.confirm('Очистить?');
-    }
-    
-    if (confirmed) {
-        // Reset form fields to defaults (like F5) but keep history
-        // Compute today's date in ISO yyyy-mm-dd for default startDate
-        const _today = new Date();
-        const _yyyy = _today.getFullYear();
-        const _mm = String(_today.getMonth() + 1).padStart(2, '0');
-        const _dd = String(_today.getDate()).padStart(2, '0');
-        const _todayStr = `${_yyyy}-${_mm}-${_dd}`;
-
-        const defaults = {
-            totalOps: 1,
-            workerCount: 1,
-            startDate: _todayStr,
-            startTime: '08:00:00',
-            chainMode: true,
-            lunchStart: '12:00',
-            lunchStart2: '00:00',
-            lunchDur: 45,
-            timeMode: 'total',
-            resIz: '',
-            coefK: '',
-            orderName: '',
-            itemName: '',
-            postingDate: _todayStr,
-            statusBefore: 'замечаний нет',
-            workExtra: 'нет',
-            devRec: 'нет'
-        };
-
-        try {
-            // If user has saved a config in localStorage, prefer restoring it for these controls
-            let cfg = null;
-            try { cfg = JSON.parse(localStorage.getItem(CONFIG_KEY) || 'null'); } catch (ee) { cfg = null; }
-
-            document.getElementById('totalOps').value = defaults.totalOps;
-            document.getElementById('workerCount').value = defaults.workerCount;
-            document.getElementById('startDate').value = defaults.startDate;
-            try {
-                // Preserve postingDate: restore from saved config if present, otherwise do not overwrite current value
-                const pdEl = document.getElementById('postingDate');
-                if (pdEl) {
-                    if (cfg && cfg.postingDate) {
-                        pdEl.value = cfg.postingDate;
-                    }
-                    // else: leave existing postingDate untouched
+            // Preserve postingDate: restore from saved config if present, otherwise do not overwrite current value
+            const pdEl = document.getElementById('postingDate');
+            if (pdEl) {
+                if (cfg && cfg.postingDate) {
+                    pdEl.value = cfg.postingDate;
                 }
-            } catch(e){}
-            document.getElementById('startTime').value = defaults.startTime;
-            document.getElementById('chainMode').checked = defaults.chainMode;
-            document.getElementById('lunchStart').value = (cfg && cfg.lunchStart) ? cfg.lunchStart : defaults.lunchStart;
-            document.getElementById('lunchStart2').value = (cfg && cfg.lunchStart2) ? cfg.lunchStart2 : defaults.lunchStart2;
-            document.getElementById('lunchDur').value = (cfg && cfg.lunchDur !== undefined) ? cfg.lunchDur : defaults.lunchDur;
-            // Always reset timeMode to default ('total') on Clear (do not restore persisted value)
-            try { if (document.getElementById('timeMode')) document.getElementById('timeMode').value = defaults.timeMode; } catch(e) {}
-            document.getElementById('resIz').value = defaults.resIz;
-            document.getElementById('coefK').value = defaults.coefK;
-            document.getElementById('orderName').value = defaults.orderName;
-            document.getElementById('itemName').value = defaults.itemName;
-            document.getElementById('statusBefore').value = defaults.statusBefore;
-            document.getElementById('workExtra').value = defaults.workExtra;
-            document.getElementById('devRec').value = defaults.devRec;
-        } catch (e) {
-            console.debug?.('clearBtn reset fields error:', e?.message);
-        }
-
-        // Re-enable totalOps input and tech-card controls if they were locked by "ЗАДАТЬ"
-        try {
-            const totalEl = document.getElementById('totalOps');
-            if (totalEl) {
-                totalEl.disabled = false;
-                totalEl.classList.remove('locked-input');
+                // else: leave existing postingDate untouched
             }
-            const workerCountEl = document.getElementById('workerCount');
-            if (workerCountEl) {
-                workerCountEl.disabled = false;
-                workerCountEl.classList.remove('locked-input');
-            }
-            const sel = document.getElementById('techCardSelect');
-            if (sel) { sel.disabled = false; sel.classList.remove('locked-input'); }
-            const saveBtn = document.getElementById('saveCardBtn');
-            if (saveBtn) { saveBtn.disabled = false; saveBtn.classList.remove('locked-control'); }
-            const delBtn = document.getElementById('deleteCardBtn');
-            if (delBtn) { delBtn.disabled = false; delBtn.classList.remove('locked-control'); }
-        } catch (e) { console.debug?.('clearBtn re-enable controls error:', e?.message); }
-
-        // Clear generated results and dynamic fields
-        container.textContent = '';
-        const tableResult = document.getElementById('tableResult');
-        const z7Result = document.getElementById('z7Result');
-        if (tableResult) tableResult.textContent = '';
-        if (z7Result) z7Result.textContent = '';
-
-        // Reset modals and internal state
-        try {
-            workerIds = [];
-            operationFirstId = '';
-            lastOperationIndex = null;
-            // Re-render modal lists if open
-            const wModal = document.getElementById('workersModal');
-            const oModal = document.getElementById('opsModal');
-            if (wModal && wModal.classList.contains('active')) renderWorkersInputList();
-            if (oModal && oModal.classList.contains('active')) renderOpsInputList();
-        } catch (e) {
-            console.debug?.('clearBtn reset state error:', e?.message);
-        }
-
-        // Re-create one empty operation block
-        renderFields();
+        } catch(e){}
+        document.getElementById('startTime').value = defaults.startTime;
+        document.getElementById('chainMode').checked = defaults.chainMode;
+        document.getElementById('lunchStart').value = (cfg && cfg.lunchStart) ? cfg.lunchStart : defaults.lunchStart;
+        document.getElementById('lunchStart2').value = (cfg && cfg.lunchStart2) ? cfg.lunchStart2 : defaults.lunchStart2;
+        document.getElementById('lunchDur').value = (cfg && cfg.lunchDur !== undefined) ? cfg.lunchDur : defaults.lunchDur;
+        // Always reset timeMode to default ('total') on Clear (do not restore persisted value)
+        try { if (document.getElementById('timeMode')) document.getElementById('timeMode').value = defaults.timeMode; } catch(e) {}
+        document.getElementById('resIz').value = defaults.resIz;
+        document.getElementById('coefK').value = defaults.coefK;
+        document.getElementById('orderName').value = defaults.orderName;
+        document.getElementById('itemName').value = defaults.itemName;
+        document.getElementById('statusBefore').value = defaults.statusBefore;
+        document.getElementById('workExtra').value = defaults.workExtra;
+        document.getElementById('devRec').value = defaults.devRec;
+    } catch (e) {
+        console.debug?.('clearBtn reset fields error:', e?.message);
     }
+
+    // Re-enable totalOps input and tech-card controls if they were locked by "ЗАДАТЬ"
+    unlockFormControls();
+
+    // Clear generated results and dynamic fields
+    container.textContent = '';
+    const tableResult = document.getElementById('tableResult');
+    const z7Result = document.getElementById('z7Result');
+    if (tableResult) tableResult.textContent = '';
+    if (z7Result) z7Result.textContent = '';
+
+    // Reset modals and internal state
+    try {
+        workerIds = [];
+        operationFirstId = '';
+        lastOperationIndex = null;
+        // Re-render modal lists if open
+        const wModal = document.getElementById('workersModal');
+        const oModal = document.getElementById('opsModal');
+        if (wModal && wModal.classList.contains('active')) renderWorkersInputList();
+        if (oModal && oModal.classList.contains('active')) renderOpsInputList();
+    } catch (e) {
+        console.debug?.('clearBtn reset state error:', e?.message);
+    }
+
+    // Re-create one empty operation block
+    renderFields();
 });
 
 // Handler for destructive Reset button: clears most localStorage and reset fields to defaults
 document.getElementById('resetBtn').addEventListener('click', async () => {
-    let confirmed = false;
     const msg = 'Сбросить все поля и очистить локальное хранилище?\nИстория расчетов, сохранённые техкарты и заметки исполнителей сохранятся.';
-    if (tauriDialog?.confirm) {
-        try {
-            confirmed = await tauriDialog.confirm(msg, { title: 'Подтверждение', kind: 'warning' });
-        } catch (e) {
-            confirmed = globalThis.confirm(msg);
-        }
-    } else {
-        confirmed = globalThis.confirm(msg);
-    }
+    if (!await confirmAction(msg)) return;
 
-    if (!confirmed) return;
-
-    // Compute today's date
-    const _today = new Date();
-    const _yyyy = _today.getFullYear();
-    const _mm = String(_today.getMonth() + 1).padStart(2, '0');
-    const _dd = String(_today.getDate()).padStart(2, '0');
-    const _todayStr = `${_yyyy}-${_mm}-${_dd}`;
-
-    const defaults = {
-        totalOps: 1,
-        workerCount: 1,
-        startDate: _todayStr,
-        startTime: '08:00:00',
-        chainMode: true,
-        lunchStart: '12:00',
-        lunchStart2: '00:00',
-        lunchDur: 45,
-        timeMode: 'total',
-        resIz: '',
-        coefK: '',
-        orderName: '',
-        itemName: '',
-        postingDate: _todayStr,
-        statusBefore: 'замечаний нет',
-        workExtra: 'нет',
-        devRec: 'нет'
-    };
+    const defaults = getFormDefaults();
 
     try {
         // Clear localStorage except preserved keys: history, tech cards, workers cheat
@@ -2690,13 +2518,7 @@ document.getElementById('resetBtn').addEventListener('click', async () => {
         document.getElementById('devRec').value = defaults.devRec;
 
         // Re-enable controls and clear generated results
-        try {
-            const totalEl = document.getElementById('totalOps'); if (totalEl) { totalEl.disabled = false; totalEl.classList.remove('locked-input'); }
-            const workerCountEl = document.getElementById('workerCount'); if (workerCountEl) { workerCountEl.disabled = false; workerCountEl.classList.remove('locked-input'); }
-            const sel = document.getElementById('techCardSelect'); if (sel) { sel.disabled = false; sel.classList.remove('locked-input'); }
-            const saveBtn = document.getElementById('saveCardBtn'); if (saveBtn) { saveBtn.disabled = false; saveBtn.classList.remove('locked-control'); }
-            const delBtn = document.getElementById('deleteCardBtn'); if (delBtn) { delBtn.disabled = false; delBtn.classList.remove('locked-control'); }
-        } catch (e) { console.debug?.('reset re-enable controls error', e?.message); }
+        unlockFormControls();
 
         container.textContent = '';
         const tableResult = document.getElementById('tableResult');
@@ -2707,10 +2529,10 @@ document.getElementById('resetBtn').addEventListener('click', async () => {
         // Re-render blank operation blocks
         try { renderFields(); } catch (e) {}
 
-        if (tauriDialog?.message) await tauriDialog.message('Сброс выполнен', { title: 'Готово' }); else alert('Сброс выполнен');
+        await showMessage('Сброс выполнен', 'Готово');
     } catch (e) {
         console.error('Reset error', e);
-        if (tauriDialog?.message) await tauriDialog.message(String(e), { title: 'Ошибка', kind: 'error' }); else alert('Ошибка: ' + e);
+        await showMessage(String(e), 'Ошибка', 'error');
     }
 });
 
@@ -2732,11 +2554,7 @@ document.getElementById('saveCardBtn').addEventListener('click', async () => {
     name = sanitizeStrict(String(name), 100).trim();
     // Блокируем потенциально опасные имена ключей (prototype pollution и т.п.)
     if (name.length === 0 || name.includes('__proto__') || name.includes('constructor') || name.includes('prototype')) {
-        if (tauriDialog?.message) {
-            await tauriDialog.message('Название не может быть пустым или содержать недопустимые последовательности', { title: 'Ошибка', kind: 'error' });
-        } else {
-            alert('Название не может быть пустым или содержать недопустимые последовательности');
-        }
+        await showMessage('Название не может быть пустым или содержать недопустимые последовательности', 'Ошибка', 'error');
         return;
     }
 
@@ -2744,31 +2562,14 @@ document.getElementById('saveCardBtn').addEventListener('click', async () => {
     loadTechCards();
     
     // Уведомление об успешном сохранении
-    if (tauriDialog?.message) {
-        await tauriDialog.message(`Шаблон "${name}" сохранён`, { title: 'Успешно' });
-    }
+    await showMessage(`Шаблон "${name}" сохранён`, 'Успешно');
 });
 
 document.getElementById('deleteCardBtn').addEventListener('click', async () => {
     const sel = document.getElementById('techCardSelect');
     if (sel.value === 'manual') return;
 
-    let confirmed = false;
-    
-    if (tauriDialog?.confirm) {
-        try {
-            confirmed = await tauriDialog.confirm('Удалить шаблон?', {
-                title: 'Подтверждение',
-                kind: 'warning'
-            });
-        } catch (e) {
-            confirmed = globalThis.confirm('Удалить?');
-        }
-    } else {
-        confirmed = globalThis.confirm('Удалить?');
-    }
-    
-    if (confirmed) {
+    if (await confirmAction('Удалить шаблон?')) {
         await safeLocalStorageRemove(sel.value);
         loadTechCards();
         sel.value = 'manual';
@@ -2810,20 +2611,12 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
             
             if (filePath) {
                 await saveFileSecure(filePath, jsonContent);
-                if (tauriDialog?.message) {
-                    await tauriDialog.message('Файл успешно сохранён!', { title: 'Успех' });
-                } else {
-                    alert('Файл успешно сохранён!');
-                }
+                await showMessage('Файл успешно сохранён!', 'Успех');
             }
             return;
         } catch (e) {
             console.error('Ошибка сохранения:', e);
-            if (tauriDialog.message) {
-                await tauriDialog.message(String(e), { title: 'Ошибка', kind: 'error' });
-            } else {
-                alert('Ошибка: ' + e);
-            }
+            await showMessage(String(e), 'Ошибка', 'error');
             return;
         }
     }
@@ -3220,18 +3013,7 @@ document.getElementById('setOpsBtn').addEventListener('click', async () => {
     // If totalOps is not locked yet, ask confirmation first
     if (!totalEl.disabled) {
         const msg = 'Вы уверены? Количество операций нельзя будет изменить.\nРазблокировка кнопкой "Очистить" или F5.';
-        let confirmed = false;
-        if (tauriDialog?.confirm) {
-            try {
-                confirmed = await tauriDialog.confirm(msg, { title: 'Подтверждение', kind: 'warning' });
-            } catch (e) {
-                confirmed = globalThis.confirm(msg);
-            }
-        } else {
-            confirmed = globalThis.confirm(msg);
-        }
-
-        if (!confirmed) return;
+        if (!await confirmAction(msg)) return;
 
         // Lock the input and mark visually
         totalEl.disabled = true;
@@ -3366,18 +3148,7 @@ document.getElementById('setWorkersBtn').addEventListener('click', async () => {
     // If workerCount is not locked yet, ask confirmation first
     if (!wcEl.disabled) {
         const msg = 'Вы уверены? Количество исполнителей нельзя будет изменить.\nРазблокировка кнопкой "Очистить" или F5.';
-        let confirmed = false;
-        if (tauriDialog?.confirm) {
-            try {
-                confirmed = await tauriDialog.confirm(msg, { title: 'Подтверждение', kind: 'warning' });
-            } catch (e) {
-                confirmed = globalThis.confirm(msg);
-            }
-        } else {
-            confirmed = globalThis.confirm(msg);
-        }
-
-        if (!confirmed) return;
+        if (!await confirmAction(msg)) return;
 
         // Lock the workerCount input and mark visually (do NOT disable tech-card controls)
         wcEl.disabled = true;
@@ -3422,7 +3193,7 @@ document.getElementById('editWorkersBtn').addEventListener('click', async (e) =>
             try {
                 const safeText = sanitizeInput(cheatEl.value || '', 5000);
                 await safeLocalStorageSet('z7_workers_cheat', safeText);
-                try { if (tauriDialog?.message) tauriDialog.message('Шпаргалка сохранена', { title: 'Инфо' }); } catch(e){}
+                showMessage('Шпаргалка сохранена', 'Инфо');
             } catch (saveErr) {
                 console.error('Auto-save workersCheat error:', saveErr);
             }
