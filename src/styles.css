@@ -255,6 +255,13 @@ input:focus, select:focus {
     background: #6b7280;
 }
 
+/* Danger button for destructive actions */
+.btn-danger {
+    background: #dc2626;
+    color: #fff;
+}
+.btn-danger:hover { background: #b91c1c; }
+
 .checkbox-group {
     display: flex;
     align-items: center;
@@ -405,6 +412,21 @@ input:focus, select:focus {
 /* Модальное окно номеров исполнителей и операций */
 #setWorkersBtn,
 #setOpsBtn { background: #3b82f6; }
+
+/* Visual hint for locked inputs (used when user confirms fixed number of operations) */
+input.locked-input {
+    background: #f3f4f6 !important;
+    color: #6b7280 !important;
+    border-color: #e5e7eb !important;
+    cursor: not-allowed;
+}
+
+/* Locked control style for buttons */
+.locked-control {
+    opacity: 0.65;
+    cursor: not-allowed;
+    box-shadow: none !important;
+}
 
 .modal-content-wide {
     max-width: 600px;

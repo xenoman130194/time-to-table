@@ -700,7 +700,7 @@ function renderFields() {
     const currentBlocks = Array.from(container.children);
     const currentCount = currentBlocks.length;
     
-    if (targetCount > currentCount) {
+        if (targetCount > currentCount) {
         for (let i = currentCount; i < targetCount; i++) {
             createOperationBlock(i + 1);
         }
@@ -835,7 +835,7 @@ function createOperationBlock(index) {
     }
     workersWrapper.append(workersBox);
     // Element shown when all workers apply (replaces checkboxes in non-individual mode)
-    const workersAll = createEl('div', { className: 'op-workers-all', style: 'display:none;' }, 'ВСЕ.');
+    const workersAll = createEl('div', { className: 'op-workers-all', style: 'display:none;' }, 'ВСЕ');
     workersWrapper.append(workersAll);
     
     // Блок времени работы
@@ -976,12 +976,10 @@ function updateWorkerUIByTimeMode() {
             box.style.display = 'grid';
             allEl.style.display = 'none';
             if (workInput) {
-                workInput.value = '0';
                 workInput.style.display = 'none';
             }
             if (workAll) workAll.style.display = '';
             if (breakInput) {
-                breakInput.value = '0';
                 breakInput.style.display = 'none';
             }
             if (breakUnit) breakUnit.style.display = 'none';
@@ -1091,16 +1089,23 @@ async function generateTable() {
         const dur = Math.max(0, Number.parseFloat(block.querySelector('.op-duration').value) || 0);
         let unit = block.querySelector('.op-unit').value;
         if (unit !== 'min' && unit !== 'hour') unit = 'min';
-        
-        let durationMs = 0;
-        if (unit === 'hour') durationMs = dur * 3600 * 1000;
-        else if (unit === 'min') durationMs = dur * 60 * 1000;
-        else durationMs = dur * 60 * 1000;
 
-        let displayDurVal = dur;
+        // Original duration in ms (from card inputs)
+        let origDurationMs = 0;
+        if (unit === 'hour') origDurationMs = dur * 3600 * 1000;
+        else origDurationMs = dur * 60 * 1000;
+
+        // Decide what duration is used for calculations vs what is shown/exported
+        let durationMsForCalc = origDurationMs;
+        let displayDurVal = dur; // value used for display/export in tables/Excel
         if (timeMode === 'total' && workerCount > 1) {
-            durationMs = durationMs / workerCount;
+            durationMsForCalc = origDurationMs / workerCount;
             displayDurVal = displayDurVal / workerCount;
+        }
+        // In 'individual' mode we keep the stored values in UI/export, but treat durations as zero for timeline calculations
+        if (timeMode === 'individual') {
+            durationMsForCalc = 0;
+            // displayDurVal remains dur so cards keep their values and Excel cells can be prefilled with original durations
         }
 
         // Apply per-operation break BEFORE starting this operation (even if 0)
@@ -1108,11 +1113,12 @@ async function generateTable() {
         let opBreakUnit = block.querySelector('.op-break-unit')?.value || 'min';
         if (opBreakUnit !== 'min' && opBreakUnit !== 'hour') opBreakUnit = 'min';
         const opBreakSec = (opBreakUnit === 'hour') ? (opBreakVal * 3600) : (opBreakVal * 60);
-        const opBreakMs = Math.floor(opBreakSec * 1000);
-        globalTime = new Date(globalTime.getTime() + opBreakMs);
+        const origOpBreakMs = Math.floor(opBreakSec * 1000);
+        const opBreakMsForCalc = (timeMode === 'individual') ? 0 : origOpBreakMs;
+        globalTime = new Date(globalTime.getTime() + opBreakMsForCalc);
 
         let opStart = new Date(globalTime);
-        let opEnd = new Date(opStart.getTime() + durationMs);
+        let opEnd = new Date(opStart.getTime() + durationMsForCalc);
         let crossedLunch = false;
 
         // Логика проверки двух обедов
@@ -1125,7 +1131,7 @@ async function generateTable() {
             // 1. Если начало операции попадает внутрь обеда -> сдвигаем старт
             if (opStart >= l.s && opStart < l.e) {
                 opStart = new Date(l.e);
-                opEnd = new Date(opStart.getTime() + durationMs);
+                opEnd = new Date(opStart.getTime() + durationMsForCalc);
                 crossedLunch = true;
             }
             
@@ -1755,15 +1761,29 @@ async function exportToExcel() {
             // Используем opNumeric если есть, иначе fallback на opIdx для старых записей
             const curOpNum = r.opNumeric ?? r.opIdx;
             const prevRowOpNum = (idx > 0) ? (rowsForExport[idx - 1].opNumeric ?? rowsForExport[idx - 1].opIdx) : -1;
+            const nextRowOpNum = (idx < rowsForExport.length - 1) ? (rowsForExport[idx + 1].opNumeric ?? rowsForExport[idx + 1].opIdx) : -1;
+            // Detect group end (last row of an operation group)
+            const isGroupEnd = (idx === rowsForExport.length - 1) || (curOpNum !== nextRowOpNum);
+            // Style mapping: use Bottom variants when row is end of group to render a thick bottom border
+            const styleMap = {
+                borderLocked: isGroupEnd ? 'sBorderLockedBottom' : 'sBorderLocked',
+                borderLeftLocked: isGroupEnd ? 'sBorderLeftLockedBottom' : 'sBorderLeftLocked',
+                iconLocked: isGroupEnd ? 'sIconLockedBottom' : 'sIconLocked',
+                timeLocked: isGroupEnd ? 'sTimeLockedBottom' : 'sTimeLocked',
+                timeEditable: isGroupEnd ? 'sTimeEditableBottom' : 'sTimeEditable',
+                durEditable: isGroupEnd ? 'sDurEditableBottom' : 'sDurEditable',
+                durLocked: isGroupEnd ? 'sDurLockedBottom' : 'sDurLocked',
+                dateLocked: isGroupEnd ? 'sDateLockedBottom' : 'sDateLocked'
+            };
             
             // If the saved calculation used 'individual' mode, make all duration cells editable in Excel
             if (data.timeMode === 'individual') {
-                durCell = `<Cell ss:StyleID="sDurEditable"><Data ss:Type="Number">${r.durVal}</Data></Cell>`;
+                durCell = `<Cell ss:StyleID="${styleMap.durEditable}"><Data ss:Type="Number">${r.durVal}</Data></Cell>`;
             } else {
                 if (curOpNum === prevRowOpNum) {
-                    durCell = `<Cell ss:StyleID="sDurLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">${r.durVal}</Data></Cell>`;
+                    durCell = `<Cell ss:StyleID="${styleMap.durLocked}" ss:Formula="=R[-1]C"><Data ss:Type="Number">${r.durVal}</Data></Cell>`;
                 } else {
-                    durCell = `<Cell ss:StyleID="sDurEditable"><Data ss:Type="Number">${r.durVal}</Data></Cell>`;
+                    durCell = `<Cell ss:StyleID="${styleMap.durEditable}"><Data ss:Type="Number">${r.durVal}</Data></Cell>`;
                 }
             }
 
@@ -1780,23 +1800,23 @@ async function exportToExcel() {
             if (isFirstEntryFirstOp) {
                 // Первая операция первой записи - защищённая ячейка с реальным значением паузы
                 if (r.workerIndex === 1) {
-                    pauseCell = `<Cell ss:StyleID="sTimeLocked"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
+                    pauseCell = `<Cell ss:StyleID="${styleMap.timeLocked}"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 } else {
-                    pauseCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
+                    pauseCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="=R[-1]C"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 }
             } else if (isFirstOpOfEntry) {
                 // Первая операция второй+ записей - значение из данных
                 if (r.workerIndex === 1) {
-                    pauseCell = `<Cell ss:StyleID="sTimeEditable"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
+                    pauseCell = `<Cell ss:StyleID="${styleMap.timeEditable}"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 } else {
-                    pauseCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
+                    pauseCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="=R[-1]C"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 }
             } else {
                 // Вторая+ операции всех записей - значение из данных
                 if (isFirstWorkerOfOp) {
-                    pauseCell = `<Cell ss:StyleID="sTimeEditable"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
+                    pauseCell = `<Cell ss:StyleID="${styleMap.timeEditable}"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 } else {
-                    pauseCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
+                    pauseCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="=R[-1]C"><Data ss:Type="Number">${pauseVal}</Data></Cell>`;
                 }
             }
 
@@ -1820,10 +1840,10 @@ async function exportToExcel() {
                     } else {
                         chainFormula = `=MOD(IF(${chainShiftCond1},${l1EndChain},${rawTimeRef}),1)`;
                     }
-                    startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="${escapeXml(chainFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
+                    startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="${escapeXml(chainFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                 } else {
                     // Если первая таблица или не цепочка - время фиксировано
-                    startTimeCell = `<Cell ss:StyleID="sTimeEditable"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
+                    startTimeCell = `<Cell ss:StyleID="${styleMap.timeEditable}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                 }
             } else {
                 // For individual mode try to locate previous operation for the same worker using INDEX/MATCH
@@ -1850,11 +1870,11 @@ async function exportToExcel() {
                         } else {
                             startFormula = `=MOD(IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause}),1)`;
                         }
-                        startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
+                        startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                     } else {
                         // no previous op number -> fallback to previous-row logic
                         if (curOpNum === prevRowOpNum) {
-                            startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
+                            startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="=R[-1]C"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                         } else {
                             const l1ValStart = `TIME(${lh},${lm},0)`;
                             const l1EndStart = `(TIME(${lh},${lm},0)+TIME(0,${ld},0))`;
@@ -1871,12 +1891,12 @@ async function exportToExcel() {
                             } else {
                                 startFormula = `=MOD(IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause}),1)`;
                             }
-                            startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
+                            startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                         }
                     }
                 } else {
                     if (curOpNum === prevRowOpNum) {
-                        startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="=R[-1]C"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
+                        startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="=R[-1]C"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                     } else {
                         // Начало операции (кроме первой) ссылается на конец предыдущей + пауза.
                         // Но если результат попадает в обед - сдвигаем на конец обеда.
@@ -1897,7 +1917,7 @@ async function exportToExcel() {
                         } else {
                             startFormula = `=MOD(IF(${startShiftCond1},${l1EndStart},${rawTimeWithPause}),1)`;
                         }
-                        startTimeCell = `<Cell ss:StyleID="sTimeLocked" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
+                        startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                     }
                 }
             }
@@ -1959,33 +1979,34 @@ async function exportToExcel() {
             // Determine numericness for opIdx and worker to avoid Excel 'number stored as text' warnings
             const opIdxNum = Number(String(r.opIdx).replaceAll("'", ""));
             const opIdxCell = Number.isFinite(opIdxNum) && String(opIdxNum) !== 'NaN'
-                ? `<Cell ss:Index="3" ss:StyleID="sBorderLocked"><Data ss:Type="Number">${opIdxNum}</Data></Cell>`
-                    : `<Cell ss:Index="3" ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(String(r.opIdx))}</Data></Cell>`;
+                ? `<Cell ss:Index="3" ss:StyleID="${styleMap.borderLocked}"><Data ss:Type="Number">${opIdxNum}</Data></Cell>`
+                    : `<Cell ss:Index="3" ss:StyleID="${styleMap.borderLocked}"><Data ss:Type="String">${escapeXml(String(r.opIdx))}</Data></Cell>`;
 
             const workerRaw = String(r.worker || '');
             const workerNum = Number(workerRaw.replaceAll("'", ""));
             const workerCell = (workerRaw.trim() !== '' && Number.isFinite(workerNum))
-                ? `<Cell ss:StyleID="sBorderLocked"><Data ss:Type="Number">${workerNum}</Data></Cell>`
-                : `<Cell ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(workerRaw))}</Data></Cell>`;
+                ? `<Cell ss:StyleID="${styleMap.borderLocked}"><Data ss:Type="Number">${workerNum}</Data></Cell>`
+                : `<Cell ss:StyleID="${styleMap.borderLocked}"><Data ss:Type="String">${escapeXml(excelSanitizeCell(workerRaw))}</Data></Cell>`;
 
             xmlBody += `
             <Row>
-                <Cell ss:Index="2" ss:StyleID="sBorderLocked"><Data ss:Type="Number">${idx + 1}</Data></Cell>
+                <Cell ss:Index="2" ss:StyleID="${styleMap.borderLocked}"><Data ss:Type="Number">${idx + 1}</Data></Cell>
                 ${opIdxCell}
-                <Cell ss:StyleID="sBorderLeftLocked"><Data ss:Type="String">${escapeXml(excelSanitizeCell(r.name))}</Data></Cell>
-                <Cell ss:StyleID="sIconLocked" ss:Formula="${escapeXml(formulaIcon)}"><Data ss:Type="String">${r.crossedLunch ? '🍽️' : ''}</Data></Cell>
+                <Cell ss:StyleID="${styleMap.borderLeftLocked}"><Data ss:Type="String">${escapeXml(excelSanitizeCell(r.name))}</Data></Cell>
+                <Cell ss:StyleID="${styleMap.iconLocked}" ss:Formula="${escapeXml(formulaIcon)}"><Data ss:Type="String">${r.crossedLunch ? '🍽️' : ''}</Data></Cell>
                 ${pauseCell}
                 ${durCell}
-                <Cell ss:StyleID="sDateLocked"><Data ss:Type="DateTime">${postingXml}</Data></Cell>
+                <Cell ss:StyleID="${styleMap.dateLocked}"><Data ss:Type="DateTime">${postingXml}</Data></Cell>
                 ${workerCell}
-                <Cell ss:StyleID="sBorderLocked"><Data ss:Type="String"></Data></Cell>
-                <Cell ss:StyleID="sDateLocked"><Data ss:Type="DateTime">${startXml}</Data></Cell>
+                <Cell ss:StyleID="${styleMap.borderLocked}"><Data ss:Type="String"></Data></Cell>
+                <Cell ss:StyleID="${styleMap.dateLocked}"><Data ss:Type="DateTime">${startXml}</Data></Cell>
                 ${startTimeCell}
-                <Cell ss:StyleID="sDateLocked"><Data ss:Type="DateTime">${endXml}</Data></Cell>
-                    <Cell ss:StyleID="sTimeLocked" ss:Formula="${escapeXml(formulaEnd)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>
-                    <Cell ss:StyleID="sBorderLocked"><Data ss:Type="String">${escapeXml(String(curOpNum) + '_' + String(r.workerIndex || 1))}</Data></Cell>
+                <Cell ss:StyleID="${styleMap.dateLocked}"><Data ss:Type="DateTime">${endXml}</Data></Cell>
+                    <Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="${escapeXml(formulaEnd)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>
+                    <Cell ss:StyleID="${styleMap.borderLocked}"><Data ss:Type="String">${escapeXml(String(curOpNum) + '_' + String(r.workerIndex || 1))}</Data></Cell>
                 </Row>
                 `;
+            // debug logging removed
                 // remember position of this op+worker within the exported rows (index relative to start of this entry)
                 rowPosMap[`${curOpNum}_${r.workerIndex || 1}`] = idx;
                 // advance absolute sheet row counter
@@ -2150,6 +2171,126 @@ function buildExcelXml(xmlBody, sheetName) {
      <NumberFormat ss:Format="h:mm:ss"/>
      <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>
      <Protection ss:Protected="0"/>
+    </Style>
+    <!-- Styles with thicker bottom border for group separation -->
+    <Style ss:ID="sBorderLockedBottom">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="3"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="12"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sBorderLeftLockedBottom">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="3"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="12"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sIconLockedBottom">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="3"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="14"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sTimeLockedBottom">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="3"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="12"/>
+     <NumberFormat ss:Format="h:mm:ss"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sTimeEditableBottom">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="3"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="12"/>
+     <NumberFormat ss:Format="h:mm:ss"/>
+     <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>
+     <Protection ss:Protected="0"/>
+    </Style>
+    <Style ss:ID="sDurEditableBottom">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="3"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="12"/>
+     <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>
+     <Protection ss:Protected="0"/>
+    </Style>
+    <Style ss:ID="sDurLockedBottom">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="3"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="12"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sDateLockedBottom">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="3"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+     <Font ss:Size="12"/>
+     <NumberFormat ss:Format="dd.mm.yyyy"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <!-- Styles with thicker top border for group separation -->
+    <Style ss:ID="sBorderLockedTop">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="3"/></Borders>
+     <Font ss:Size="12"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sBorderLeftLockedTop">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="3"/></Borders>
+     <Font ss:Size="12"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sIconLockedTop">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="3"/></Borders>
+     <Font ss:Size="14"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sTimeLockedTop">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="3"/></Borders>
+     <Font ss:Size="12"/>
+     <NumberFormat ss:Format="h:mm:ss"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sTimeEditableTop">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="3"/></Borders>
+     <Font ss:Size="12"/>
+     <NumberFormat ss:Format="h:mm:ss"/>
+     <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>
+     <Protection ss:Protected="0"/>
+    </Style>
+    <Style ss:ID="sDurEditableTop">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="3"/></Borders>
+     <Font ss:Size="12"/>
+     <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>
+     <Protection ss:Protected="0"/>
+    </Style>
+    <Style ss:ID="sDurLockedTop">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="3"/></Borders>
+     <Font ss:Size="12"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
+    </Style>
+    <Style ss:ID="sDateLockedTop">
+     <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+     <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="3"/></Borders>
+     <Font ss:Size="12"/>
+     <NumberFormat ss:Format="dd.mm.yyyy"/>
+     <Interior ss:Color="#F4CCCC" ss:Pattern="Solid"/>
+     <Protection ss:Protected="1"/>
     </Style>
  </Styles>
  <Worksheet ss:Name="${escapeXml(sheetName)}" ss:Protected="1" x:Password="">
@@ -2344,6 +2485,8 @@ if (totalOpsEl) {
     });
     totalOpsEl.addEventListener('keyup', renderFields);
 }
+// Handler for the "ЗАДАТЬ" button near #totalOps: confirm and lock the input
+// NOTE: setOpsBtn handler implemented below (near modal open) to ensure single unified behavior
 document.getElementById('generateBtn').addEventListener('click', generateTable);
 
 document.getElementById('clearBtn').addEventListener('click', async () => {
@@ -2351,15 +2494,15 @@ document.getElementById('clearBtn').addEventListener('click', async () => {
     
     if (tauriDialog?.confirm) {
         try {
-            confirmed = await tauriDialog.confirm('Очистить все поля?', {
+            confirmed = await tauriDialog.confirm('Очистить?', {
                 title: 'Подтверждение',
                 kind: 'warning'
             });
         } catch (e) {
-            confirmed = globalThis.confirm('Очистить все поля?');
+            confirmed = globalThis.confirm('Очистить?');
         }
     } else {
-        confirmed = globalThis.confirm('Очистить все поля?');
+        confirmed = globalThis.confirm('Очистить?');
     }
     
     if (confirmed) {
@@ -2392,16 +2535,30 @@ document.getElementById('clearBtn').addEventListener('click', async () => {
         };
 
         try {
+            // If user has saved a config in localStorage, prefer restoring it for these controls
+            let cfg = null;
+            try { cfg = JSON.parse(localStorage.getItem(CONFIG_KEY) || 'null'); } catch (ee) { cfg = null; }
+
             document.getElementById('totalOps').value = defaults.totalOps;
             document.getElementById('workerCount').value = defaults.workerCount;
             document.getElementById('startDate').value = defaults.startDate;
-            try { if (document.getElementById('postingDate')) document.getElementById('postingDate').value = defaults.postingDate; } catch(e){}
+            try {
+                // Preserve postingDate: restore from saved config if present, otherwise do not overwrite current value
+                const pdEl = document.getElementById('postingDate');
+                if (pdEl) {
+                    if (cfg && cfg.postingDate) {
+                        pdEl.value = cfg.postingDate;
+                    }
+                    // else: leave existing postingDate untouched
+                }
+            } catch(e){}
             document.getElementById('startTime').value = defaults.startTime;
             document.getElementById('chainMode').checked = defaults.chainMode;
-            document.getElementById('lunchStart').value = defaults.lunchStart;
-            document.getElementById('lunchStart2').value = defaults.lunchStart2;
-            document.getElementById('lunchDur').value = defaults.lunchDur;
-            document.getElementById('timeMode').value = defaults.timeMode;
+            document.getElementById('lunchStart').value = (cfg && cfg.lunchStart) ? cfg.lunchStart : defaults.lunchStart;
+            document.getElementById('lunchStart2').value = (cfg && cfg.lunchStart2) ? cfg.lunchStart2 : defaults.lunchStart2;
+            document.getElementById('lunchDur').value = (cfg && cfg.lunchDur !== undefined) ? cfg.lunchDur : defaults.lunchDur;
+            // Always reset timeMode to default ('total') on Clear (do not restore persisted value)
+            try { if (document.getElementById('timeMode')) document.getElementById('timeMode').value = defaults.timeMode; } catch(e) {}
             document.getElementById('resIz').value = defaults.resIz;
             document.getElementById('coefK').value = defaults.coefK;
             document.getElementById('orderName').value = defaults.orderName;
@@ -2412,6 +2569,26 @@ document.getElementById('clearBtn').addEventListener('click', async () => {
         } catch (e) {
             console.debug?.('clearBtn reset fields error:', e?.message);
         }
+
+        // Re-enable totalOps input and tech-card controls if they were locked by "ЗАДАТЬ"
+        try {
+            const totalEl = document.getElementById('totalOps');
+            if (totalEl) {
+                totalEl.disabled = false;
+                totalEl.classList.remove('locked-input');
+            }
+            const workerCountEl = document.getElementById('workerCount');
+            if (workerCountEl) {
+                workerCountEl.disabled = false;
+                workerCountEl.classList.remove('locked-input');
+            }
+            const sel = document.getElementById('techCardSelect');
+            if (sel) { sel.disabled = false; sel.classList.remove('locked-input'); }
+            const saveBtn = document.getElementById('saveCardBtn');
+            if (saveBtn) { saveBtn.disabled = false; saveBtn.classList.remove('locked-control'); }
+            const delBtn = document.getElementById('deleteCardBtn');
+            if (delBtn) { delBtn.disabled = false; delBtn.classList.remove('locked-control'); }
+        } catch (e) { console.debug?.('clearBtn re-enable controls error:', e?.message); }
 
         // Clear generated results and dynamic fields
         container.textContent = '';
@@ -2436,6 +2613,104 @@ document.getElementById('clearBtn').addEventListener('click', async () => {
 
         // Re-create one empty operation block
         renderFields();
+    }
+});
+
+// Handler for destructive Reset button: clears most localStorage and reset fields to defaults
+document.getElementById('resetBtn').addEventListener('click', async () => {
+    let confirmed = false;
+    const msg = 'Сбросить все поля и очистить локальное хранилище?\nИстория расчетов, сохранённые техкарты и заметки исполнителей сохранятся.';
+    if (tauriDialog?.confirm) {
+        try {
+            confirmed = await tauriDialog.confirm(msg, { title: 'Подтверждение', kind: 'warning' });
+        } catch (e) {
+            confirmed = globalThis.confirm(msg);
+        }
+    } else {
+        confirmed = globalThis.confirm(msg);
+    }
+
+    if (!confirmed) return;
+
+    // Compute today's date
+    const _today = new Date();
+    const _yyyy = _today.getFullYear();
+    const _mm = String(_today.getMonth() + 1).padStart(2, '0');
+    const _dd = String(_today.getDate()).padStart(2, '0');
+    const _todayStr = `${_yyyy}-${_mm}-${_dd}`;
+
+    const defaults = {
+        totalOps: 1,
+        workerCount: 1,
+        startDate: _todayStr,
+        startTime: '08:00:00',
+        chainMode: true,
+        lunchStart: '12:00',
+        lunchStart2: '00:00',
+        lunchDur: 45,
+        timeMode: 'total',
+        resIz: '',
+        coefK: '',
+        orderName: '',
+        itemName: '',
+        postingDate: _todayStr,
+        statusBefore: 'замечаний нет',
+        workExtra: 'нет',
+        devRec: 'нет'
+    };
+
+    try {
+        // Clear localStorage except preserved keys: history, tech cards, workers cheat
+        const preservePrefixes = ['z7_card_'];
+        const preserveKeys = new Set(['z7_history_session', 'z7_workers_cheat']);
+        const allKeys = Array.from(Object.keys(localStorage));
+        for (const k of allKeys) {
+            if (preserveKeys.has(k)) continue;
+            if (preservePrefixes.some(p => k.startsWith(p))) continue;
+            try { await safeLocalStorageRemove(k); } catch (e) { try { localStorage.removeItem(k); } catch (ee) {} }
+        }
+
+        // Reset UI fields to defaults (full reset)
+        document.getElementById('totalOps').value = defaults.totalOps;
+        document.getElementById('workerCount').value = defaults.workerCount;
+        document.getElementById('startDate').value = defaults.startDate;
+        try { if (document.getElementById('postingDate')) document.getElementById('postingDate').value = defaults.postingDate; } catch(e){}
+        document.getElementById('startTime').value = defaults.startTime;
+        document.getElementById('chainMode').checked = defaults.chainMode;
+        document.getElementById('lunchStart').value = defaults.lunchStart;
+        document.getElementById('lunchStart2').value = defaults.lunchStart2;
+        document.getElementById('lunchDur').value = defaults.lunchDur;
+        try { if (document.getElementById('timeMode')) document.getElementById('timeMode').value = defaults.timeMode; } catch(e){}
+        document.getElementById('resIz').value = defaults.resIz;
+        document.getElementById('coefK').value = defaults.coefK;
+        document.getElementById('orderName').value = defaults.orderName;
+        document.getElementById('itemName').value = defaults.itemName;
+        document.getElementById('statusBefore').value = defaults.statusBefore;
+        document.getElementById('workExtra').value = defaults.workExtra;
+        document.getElementById('devRec').value = defaults.devRec;
+
+        // Re-enable controls and clear generated results
+        try {
+            const totalEl = document.getElementById('totalOps'); if (totalEl) { totalEl.disabled = false; totalEl.classList.remove('locked-input'); }
+            const workerCountEl = document.getElementById('workerCount'); if (workerCountEl) { workerCountEl.disabled = false; workerCountEl.classList.remove('locked-input'); }
+            const sel = document.getElementById('techCardSelect'); if (sel) { sel.disabled = false; sel.classList.remove('locked-input'); }
+            const saveBtn = document.getElementById('saveCardBtn'); if (saveBtn) { saveBtn.disabled = false; saveBtn.classList.remove('locked-control'); }
+            const delBtn = document.getElementById('deleteCardBtn'); if (delBtn) { delBtn.disabled = false; delBtn.classList.remove('locked-control'); }
+        } catch (e) { console.debug?.('reset re-enable controls error', e?.message); }
+
+        container.textContent = '';
+        const tableResult = document.getElementById('tableResult');
+        const z7Result = document.getElementById('z7Result');
+        if (tableResult) tableResult.textContent = '';
+        if (z7Result) z7Result.textContent = '';
+
+        // Re-render blank operation blocks
+        try { renderFields(); } catch (e) {}
+
+        if (tauriDialog?.message) await tauriDialog.message('Сброс выполнен', { title: 'Готово' }); else alert('Сброс выполнен');
+    } catch (e) {
+        console.error('Reset error', e);
+        if (tauriDialog?.message) await tauriDialog.message(String(e), { title: 'Ошибка', kind: 'error' }); else alert('Ошибка: ' + e);
     }
 });
 
@@ -2609,6 +2884,50 @@ renderFields();
 setupExcelExport();
 restoreHistoryFromStorage();
 updateFirstPauseVisibility();
+
+// === PERSISTENT CONFIG (timeMode + lunch settings) ===
+const CONFIG_KEY = 'z7_config';
+function saveConfig() {
+    try {
+        const cfg = {
+                lunchStart: document.getElementById('lunchStart')?.value || '12:00',
+                lunchStart2: document.getElementById('lunchStart2')?.value || '00:00',
+                lunchDur: document.getElementById('lunchDur')?.value || '45',
+                postingDate: document.getElementById('postingDate')?.value || null
+            };
+        localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
+    } catch (e) { console.debug?.('saveConfig error', e?.message); }
+}
+
+function loadConfig() {
+    try {
+        const raw = localStorage.getItem(CONFIG_KEY);
+        if (!raw) return null;
+        const cfg = JSON.parse(raw);
+        if (cfg.lunchStart && document.getElementById('lunchStart')) document.getElementById('lunchStart').value = cfg.lunchStart;
+        if (cfg.lunchStart2 && document.getElementById('lunchStart2')) document.getElementById('lunchStart2').value = cfg.lunchStart2;
+        if (cfg.lunchDur !== undefined && document.getElementById('lunchDur')) document.getElementById('lunchDur').value = cfg.lunchDur;
+        if (cfg.postingDate && document.getElementById('postingDate')) document.getElementById('postingDate').value = cfg.postingDate;
+        try { updateWorkerUIByTimeMode(); } catch (e) {}
+        return cfg;
+    } catch (e) { console.debug?.('loadConfig error', e?.message); return null; }
+}
+
+// Wire up auto-save for these controls
+try {
+    const ids = ['lunchStart','lunchStart2','lunchDur','postingDate'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', saveConfig);
+        el.addEventListener('input', saveConfig);
+    });
+} catch (e) { console.debug?.('attach saveConfig listeners failed', e?.message); }
+
+// Load persisted config now (so Clear/Reload restores these values)
+loadConfig();
+// Ensure timeMode is not restored from storage: always start in default 'total' on load/refresh
+try { const tEl = document.getElementById('timeMode'); if (tEl) { tEl.value = 'total'; updateWorkerUIByTimeMode(); } } catch(e) { console.debug?.('reset timeMode default error', e?.message); }
 
 // === МОДАЛЬНОЕ ОКНО "О ПРОГРАММЕ" ===
 let aboutTextCache = null;
@@ -2894,7 +3213,43 @@ function resetOperationIds() {
     try { updateMainOperationLabels(); } catch (e) { /* ignore */ }
 }
 
-document.getElementById('setOpsBtn').addEventListener('click', () => {
+document.getElementById('setOpsBtn').addEventListener('click', async () => {
+    const totalEl = document.getElementById('totalOps');
+    if (!totalEl) return;
+
+    // If totalOps is not locked yet, ask confirmation first
+    if (!totalEl.disabled) {
+        const msg = 'Вы уверены? Количество операций нельзя будет изменить.\nРазблокировка кнопкой "Очистить" или F5.';
+        let confirmed = false;
+        if (tauriDialog?.confirm) {
+            try {
+                confirmed = await tauriDialog.confirm(msg, { title: 'Подтверждение', kind: 'warning' });
+            } catch (e) {
+                confirmed = globalThis.confirm(msg);
+            }
+        } else {
+            confirmed = globalThis.confirm(msg);
+        }
+
+        if (!confirmed) return;
+
+        // Lock the input and mark visually
+        totalEl.disabled = true;
+        totalEl.classList.add('locked-input');
+        try { renderFields(); } catch (e) { console.debug?.('renderFields after setOps lock failed', e?.message); }
+
+        // Also disable tech-card selection and Save/Delete buttons
+        try {
+            const sel = document.getElementById('techCardSelect');
+            if (sel) { sel.disabled = true; sel.classList.add('locked-input'); }
+            const saveBtn = document.getElementById('saveCardBtn');
+            if (saveBtn) { saveBtn.disabled = true; saveBtn.classList.add('locked-control'); }
+            const delBtn = document.getElementById('deleteCardBtn');
+            if (delBtn) { delBtn.disabled = true; delBtn.classList.add('locked-control'); }
+        } catch (e) { console.debug?.('lock tech card controls failed', e?.message); }
+    }
+
+    // Now open the modal (no extra confirmation when already locked)
     renderOpsInputList();
     document.getElementById('opsModal').classList.add('active');
 });
@@ -3004,7 +3359,33 @@ function resetWorkerIds() {
     renderWorkersInputList();
 }
 
-document.getElementById('setWorkersBtn').addEventListener('click', () => {
+document.getElementById('setWorkersBtn').addEventListener('click', async () => {
+    const wcEl = document.getElementById('workerCount');
+    if (!wcEl) return;
+
+    // If workerCount is not locked yet, ask confirmation first
+    if (!wcEl.disabled) {
+        const msg = 'Вы уверены? Количество исполнителей нельзя будет изменить.\nРазблокировка кнопкой "Очистить" или F5.';
+        let confirmed = false;
+        if (tauriDialog?.confirm) {
+            try {
+                confirmed = await tauriDialog.confirm(msg, { title: 'Подтверждение', kind: 'warning' });
+            } catch (e) {
+                confirmed = globalThis.confirm(msg);
+            }
+        } else {
+            confirmed = globalThis.confirm(msg);
+        }
+
+        if (!confirmed) return;
+
+        // Lock the workerCount input and mark visually (do NOT disable tech-card controls)
+        wcEl.disabled = true;
+        wcEl.classList.add('locked-input');
+        try { renderFields(); } catch (e) { console.debug?.('renderFields after setWorkers lock failed', e?.message); }
+    }
+
+    // Open workers modal (no extra confirmation when already locked)
     renderWorkersInputList();
     document.getElementById('workersModal').classList.add('active');
 });
