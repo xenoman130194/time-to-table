@@ -2784,7 +2784,8 @@ document.getElementById('deleteCardBtn').addEventListener('click', async () => {
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
             // Ищем последнее число в строке — это длительность
-            const match = line.match(/^(.+)\s+(\d+(?:[.,]\d{1,2})?)\s*$/);
+            // (.+?) ленивый квантор вместо жадного (.+) — защита от ReDoS
+            const match = line.match(/^(.+?)\s+(\d+(?:[.,]\d{1,2})?)\s*$/);
             if (!match) {
                 errors.push(`Строка ${i + 1}: не удалось распознать — "${line}"`);
                 continue;
