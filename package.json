@@ -1,6 +1,6 @@
 {
   "name": "time-to-table",
-  "version": "0.6.6",
+  "version": "0.6.7-rc",
   "description": "Калькулятор для ленивых - расчёт времени операций",
   "author": "Галимзянов Г.Р.",
   "license": "GPL-3.0-or-later",

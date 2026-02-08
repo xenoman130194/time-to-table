@@ -66,7 +66,8 @@ function sanitizeStrict(str, maxLength = 500) {
     if (typeof str !== 'string') return '';
     // Разрешаем: A-Z a-z, Cyrillic 00-F? (use 00-FF earlier) — use common Cyrillic range \u0400-\u04FF
     // цифры, запятая, точка, символ №, пробел
-    const cleaned = String(str).replaceAll(/[^A-Za-z\u0400-\u04FF0-9,.№ ]+/g, '');
+    // Разрешаем также символы: слэш '/', подчёркивание '_' и дефис '-'
+    const cleaned = String(str).replaceAll(/[^A-Za-z\u0400-\u04FF0-9,.№ _\/\-]+/g, '');
     return cleaned.substring(0, maxLength);
 }
 
@@ -270,18 +271,87 @@ function createZ7TableElement(z7Lines) {
     return z7Table;
 }
 
-// Общие значения по умолчанию для формы
+// Ключ localStorage для пользовательских умолчаний (Настройки)
+const DEFAULTS_KEY = 'z7_defaults';
+
+// Встроенные умолчания
+function _builtinDefaults() {
+    return {
+        chainMode: true,
+        timeMode: 'total',
+        statusBefore: 'замечаний нет',
+        workExtra: 'нет',
+        devRec: 'нет',
+        sortMode: 'sequential',
+        theme: 'light'
+    };
+}
+
+// === ТЕМА ===
+// Применяет тему мгновенно (добавляет/убирает class на body + заголовок окна Tauri)
+function applyTheme(theme) {
+    if (theme === 'dark') {
+        document.body.classList.add('dark');
+    } else {
+        document.body.classList.remove('dark');
+    }
+    // Переключаем тему заголовка окна через Tauri API
+    try {
+        const win = globalThis.__TAURI__?.webviewWindow?.getCurrentWebviewWindow?.();
+        if (win?.setTheme) {
+            win.setTheme(theme === 'dark' ? 'dark' : 'light').catch(() => {});
+        }
+    } catch (e) { console.debug?.('setTheme error', e?.message); }
+}
+
+// Применяем тему как можно раньше, чтобы избежать вспышки
+(function earlyApplyTheme() {
+    try {
+        const raw = localStorage.getItem(DEFAULTS_KEY);
+        if (raw) {
+            const d = JSON.parse(raw);
+            if (d && d.theme === 'dark') {
+                document.body.classList.add('dark');
+                // Заголовок окна переключим после инициализации Tauri
+                globalThis.addEventListener('DOMContentLoaded', () => {
+                    setTimeout(() => {
+                        try {
+                            const win = globalThis.__TAURI__?.webviewWindow?.getCurrentWebviewWindow?.();
+                            if (win?.setTheme) win.setTheme('dark').catch(() => {});
+                        } catch(e) {}
+                    }, 150);
+                });
+            }
+        }
+    } catch(e) {}
+})();
+
+// Загружает пользовательские умолчания (или встроенные, если не заданы)
+function getUserDefaults() {
+    try {
+        const raw = localStorage.getItem(DEFAULTS_KEY);
+        if (raw) {
+            const d = JSON.parse(raw);
+            if (d && typeof d === 'object') return Object.assign(_builtinDefaults(), d);
+        }
+    } catch (e) { console.debug?.('getUserDefaults error', e?.message); }
+    return _builtinDefaults();
+}
+
+// Общие значения по умолчанию для формы (учитывают пользовательские настройки)
 function getFormDefaults() {
     const _today = new Date();
     const _yyyy = _today.getFullYear();
     const _mm = String(_today.getMonth() + 1).padStart(2, '0');
     const _dd = String(_today.getDate()).padStart(2, '0');
     const _todayStr = `${_yyyy}-${_mm}-${_dd}`;
+    const ud = getUserDefaults();
     return {
         totalOps: 1, workerCount: 1, startDate: _todayStr, startTime: '08:00:00',
-        chainMode: true, lunchStart: '12:00', lunchStart2: '00:00', lunchDur: 45,
-        timeMode: 'total', resIz: '', coefK: '', orderName: '', itemName: '',
-        postingDate: _todayStr, statusBefore: 'замечаний нет', workExtra: 'нет', devRec: 'нет'
+        chainMode: ud.chainMode, lunchStart: '12:00', lunchStart2: '00:00', lunchDur: 45,
+        timeMode: ud.timeMode, resIz: '', coefK: '', orderName: '', itemName: '',
+        postingDate: _todayStr, statusBefore: ud.statusBefore, workExtra: ud.workExtra, devRec: ud.devRec,
+        sortMode: ud.sortMode
     };
 }
 
@@ -321,7 +391,8 @@ function unlockFormControls() {
         { id: 'workerCount', cls: 'locked-input' },
         { id: 'techCardSelect', cls: 'locked-input' },
         { id: 'saveCardBtn', cls: 'locked-control' },
-        { id: 'deleteCardBtn', cls: 'locked-control' }
+        { id: 'deleteCardBtn', cls: 'locked-control' },
+        { id: 'analyzeCardBtn', cls: 'locked-control' }
     ];
     ids.forEach(({ id, cls }) => {
         try {
@@ -335,16 +406,27 @@ function unlockFormControls() {
 function buildLunchShiftFormula(rawTimeExpr, lh, lm, lh2, lm2, ld) {
     const l1Val = `TIME(${lh},${lm},0)`;
     const l1End = `(TIME(${lh},${lm},0)+TIME(0,${ld},0))`;
-    const cond1 = `AND(${rawTimeExpr}>=${l1Val}, ${rawTimeExpr}<${l1End})`;
+    
+    // Используем MOD для проверки времени (игнорируя дату/переполнение суток)
+    const tp = `MOD(${rawTimeExpr}, 1)`;
+    const cond1 = `AND(${tp}>=${l1Val}, ${tp}<${l1End})`;
+    
+    // Если попали в обед: берем целую часть (дни) + конец обеда
+    const res1 = `(INT(${rawTimeExpr}) + ${l1End})`;
+    const shifted1 = `IF(${cond1},${res1},${rawTimeExpr})`;
+    
     const hasLunch2 = !(lh2 === 0 && lm2 === 0);
     if (hasLunch2) {
         const l2Val = `TIME(${lh2},${lm2},0)`;
         const l2End = `(TIME(${lh2},${lm2},0)+TIME(0,${ld},0))`;
-        const shifted1 = `IF(${cond1},${l1End},${rawTimeExpr})`;
-        const cond2 = `AND(${shifted1}>=${l2Val}, ${shifted1}<${l2End})`;
-        return `=MOD(IF(${cond2},${l2End},${shifted1}),1)`;
+        
+        const tp2 = `MOD(${shifted1}, 1)`;
+        const cond2 = `AND(${tp2}>=${l2Val}, ${tp2}<${l2End})`;
+        const res2 = `(INT(${shifted1}) + ${l2End})`;
+        
+        return `IF(${cond2},${res2},${shifted1})`;
     }
-    return `=MOD(IF(${cond1},${l1End},${rawTimeExpr}),1)`;
+    return shifted1;
 }
 
 function validateCardData(steps) {
@@ -443,6 +525,8 @@ try {
 // State for operations modal (moved early to avoid TDZ when functions run)
 let operationFirstId = ''; // Первый 8-значный номер подтверждения
 let lastOperationIndex = null; // Индекс операции, которая будет "последней"
+let penultimateOperationIndex = null; // Индекс операции, которая будет "предпоследней"
+let autoIncrementEnabled = false; // Состояние чекбокса "авто"
 
 // Ограничение ввода в поля 'Заказ' и 'Rиз' — только цифры
 try {
@@ -663,7 +747,7 @@ function restoreHistoryFromStorage() {
                 data.rows.forEach((r, ri) => {
                     const tr = createEl('tr');
                     tr.append(
-                        createEl('td', {}, ri + 1),
+                        createEl('td', {}, r.originalOpIndex || (ri + 1)),
                         createEl('td', {}, r.opIdx),
                         createEl('td', { style: 'text-align:center; font-weight:600;' }, r.name),
                         createEl('td', {}, r.crossedLunch ? '🍽️' : ''),
@@ -743,19 +827,24 @@ function updateFirstPauseVisibility() {
 function renderFields() {
     const targetCount = validateNumber(document.getElementById('totalOps').value, 1, 20);
     document.getElementById('totalOps').value = targetCount;
-    
+
     // Валидация отрицательных значений для #workerCount
     let workerCount = Number.parseInt(document.getElementById('workerCount').value, 10);
     if (workerCount < 1) {
         document.getElementById('workerCount').value = 1;
     }
-    
+
     const currentBlocks = Array.from(container.children);
     const currentCount = currentBlocks.length;
-    
-        if (targetCount > currentCount) {
-        for (let i = currentCount; i < targetCount; i++) {
-            createOperationBlock(i + 1);
+
+    if (targetCount > currentCount) {
+        let maxIndex = 0;
+        currentBlocks.forEach(b => {
+            const idx = Number.parseInt(b.dataset.originalIndex, 10);
+            if (!Number.isNaN(idx) && idx > maxIndex) maxIndex = idx;
+        });
+        for (let i = 0; i < (targetCount - currentCount); i++) {
+            createOperationBlock(maxIndex + 1 + i);
         }
     } else if (targetCount < currentCount) {
         for (let i = currentCount - 1; i >= targetCount; i--) {
@@ -777,6 +866,7 @@ function renderFields() {
 
 function createOperationBlock(index) {
     const block = createEl('div', { className: 'op-block' });
+    block.dataset.originalIndex = index;
     // Operation number label (shows confirmation number if set, otherwise sequential index)
     const totalOpsCurrent = Number.parseInt(document.getElementById('totalOps')?.value || '0', 10) || 0;
     const opNumText = (typeof getOperationLabel === 'function') ? getOperationLabel(index, totalOpsCurrent) : String(index);
@@ -1008,6 +1098,16 @@ function updateWorkerUIByTimeMode() {
         const breakAll = block.querySelector('.op-break-all');
         if (!box || !allEl) return;
         if (mode === 'individual') {
+            // Save value if not saved yet, then zero it out
+            if (workInput && workInput.dataset.savedVal === undefined) {
+                workInput.dataset.savedVal = workInput.value;
+                workInput.value = 0;
+            }
+            if (breakInput && breakInput.dataset.savedVal === undefined) {
+                breakInput.dataset.savedVal = breakInput.value;
+                breakInput.value = 0;
+            }
+
             // Individual: show per-op worker checkboxes, hide numeric inputs and show 'В Excel' placeholders
             box.style.display = 'grid';
             allEl.style.display = 'none';
@@ -1021,6 +1121,16 @@ function updateWorkerUIByTimeMode() {
             if (breakUnit) breakUnit.style.display = 'none';
             if (breakAll) breakAll.style.display = '';
         } else {
+            // Restore values if saved
+            if (workInput && workInput.dataset.savedVal !== undefined) {
+                workInput.value = workInput.dataset.savedVal;
+                delete workInput.dataset.savedVal;
+            }
+            if (breakInput && breakInput.dataset.savedVal !== undefined) {
+                breakInput.value = breakInput.dataset.savedVal;
+                delete breakInput.dataset.savedVal;
+            }
+
             // total / per_worker: hide per-op worker checkboxes and show unified inputs
             const cbs = Array.from(box.querySelectorAll('.op-worker-checkbox'));
             cbs.forEach(cb => { cb.checked = true; });
@@ -1105,8 +1215,25 @@ async function generateTable() {
     }
     let lunch2EndTime = new Date(lunch2StartTime.getTime() + lunchDurMin * 60000);
 
-    const ops = document.querySelectorAll('.op-block');
-    if (ops.length === 0) return;
+    const opsNodeList = document.querySelectorAll('.op-block');
+    if (opsNodeList.length === 0) return;
+    const ops = Array.from(opsNodeList);
+
+    // Сортировка для расчета согласно выбранному режиму
+    const sortMode = document.getElementById('opsSortMode')?.value || 'sequential';
+    if (sortMode === 'confirmation') {
+        ops.sort((a, b) => {
+            const idA = Number(a.dataset.opId) || 0;
+            const idB = Number(b.dataset.opId) || 0;
+            return idA - idB;
+        });
+    } else {
+        ops.sort((a, b) => {
+            const idxA = Number(a.dataset.originalIndex) || 0;
+            const idxB = Number(b.dataset.originalIndex) || 0;
+            return idxA - idxB;
+        });
+    }
 
     const operationNames = [];
     const dataMain = [];
@@ -1122,6 +1249,7 @@ async function generateTable() {
         const rawOpName = block.querySelector('.op-header-input').value || '';
         const name = sanitizeStrict(stripOrdinalPrefix(rawOpName), 200);
         operationNames.push(name);
+        const originalOpIndex = block.dataset.originalIndex || (opIndex + 1);
         const dur = Math.max(0, Number.parseFloat(block.querySelector('.op-duration').value) || 0);
         let unit = block.querySelector('.op-unit').value;
         if (unit !== 'min' && unit !== 'hour') unit = 'min';
@@ -1170,7 +1298,7 @@ async function generateTable() {
                 opEnd = new Date(opStart.getTime() + durationMsForCalc);
                 crossedLunch = true;
             }
-            
+
             // 2. Если операция накрывает начало обеда (началась до, заканчивается после)
             if (opStart < l.s && opEnd > l.s) {
                 let lDur = l.e.getTime() - l.s.getTime();
@@ -1195,8 +1323,9 @@ async function generateTable() {
             const rowPauseExcel = opBreakSec / 86400.0;
 
             dataMain.push({
-                opIdx: getOperationLabel(opIndex + 1, ops.length), // Номер подтверждения или порядковый номер
+                opIdx: block.dataset.opId || getOperationLabel(opIndex + 1, ops.length), // Номер подтверждения или порядковый номер
                 opNumeric: opIndex + 1, // Числовой индекс для Excel формул
+                originalOpIndex: originalOpIndex,
                 name: name,
                 worker: getWorkerLabel(w),
                 workerIndex: w, // сохраняем числовой индекс для Excel формул
@@ -1260,7 +1389,7 @@ async function generateTable() {
     dataMain.forEach((row, ri) => {
         const trOps = createEl('tr');
         trOps.append(
-            createEl('td', {}, ri + 1),
+            createEl('td', {}, row.originalOpIndex || (ri + 1)),
             createEl('td', {}, row.opIdx),
             createEl('td', { style: 'text-align:center; font-weight:600;' }, row.name),
             createEl('td', { style: 'font-size: 24px; line-height: 1; padding: 4px 12px;' }, row.crossedLunch ? '🍽️' : ''),
@@ -1383,7 +1512,7 @@ async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isCh
         data.forEach((r, ri) => {
             const tr = createEl('tr');
             tr.append(
-                createEl('td', {}, ri + 1),
+                createEl('td', {}, r.originalOpIndex || (ri + 1)),
                 createEl('td', {}, r.opIdx),
                 createEl('td', { style: 'text-align:center;' }, r.name),
                 createEl('td', {}, r.crossedLunch ? '🍽️' : ''),
@@ -1406,7 +1535,7 @@ async function addToHistoryTable(data, cardName, z7LinesArray, lunchConfig, isCh
         entryDiv.append(header, table, createEl('div', { style: 'height:10px' }), z7Table);
         historyList.prepend(entryDiv);
         
-        // Сохраняем историю в localStorage
+        // Сохран������ем историю в localStorage
         await saveHistoryToStorage();
         updateStartTimeFromHistory();
         updateFirstPauseVisibility();
@@ -1664,10 +1793,10 @@ async function exportToExcel() {
     // Вставляем строку авторства в самый верх и пустую строку после неё
     xmlBody += `
     <Row ss:Height="50" ss:AutoFitHeight="0">
-        <Cell ss:Index="2" ss:MergeAcross="13" ss:StyleID="sAuthor"><Data ss:Type="String">${escapeXml('Создано при помощи калькулятора для ленивых. Ленивым от ленивого. 🙂')}</Data></Cell>
+        <Cell ss:Index="2" ss:MergeAcross="14" ss:StyleID="sAuthor"><Data ss:Type="String">${escapeXml('Создано при помощи калькулятора для ленивых. Ленивым от ленивого. 🙂')}</Data></Cell>
     </Row>
     <Row>
-        <Cell ss:Index="2" ss:MergeAcross="13" ss:StyleID="sTextLocked"><Data ss:Type="String"></Data></Cell>
+        <Cell ss:Index="2" ss:MergeAcross="14" ss:StyleID="sTextLocked"><Data ss:Type="String"></Data></Cell>
     </Row>
     `;
     // Two rows emitted above
@@ -1687,10 +1816,14 @@ async function exportToExcel() {
         
         // Определяем единицу измерения для заголовка
         const headerUnit = getHeaderUnitSuffix(data.rows);
+        let altHeaderUnit = '';
+        if (headerUnit === ' (мин)') altHeaderUnit = ' (час)';
+        else if (headerUnit === ' (час)') altHeaderUnit = ' (мин)';
+        else altHeaderUnit = ' (алт.)';
 
         xmlBody += `
         <Row>
-            <Cell ss:Index="2" ss:MergeAcross="13" ss:StyleID="sTitle"><Data ss:Type="String">${escapeXml(excelSanitizeCell(data.title))}</Data></Cell>
+            <Cell ss:Index="2" ss:MergeAcross="14" ss:StyleID="sTitle"><Data ss:Type="String">${escapeXml(excelSanitizeCell(data.title))}</Data></Cell>
         </Row>
         <Row>
             <Cell ss:Index="2" ss:StyleID="sHeader"><Data ss:Type="String">№</Data></Cell>
@@ -1699,6 +1832,7 @@ async function exportToExcel() {
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Обед?</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Пауза перед началом операции</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">ФактРабота${headerUnit}</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">ФактРабота${altHeaderUnit}</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Дата проводки</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Исполнитель</Data></Cell>
             <Cell ss:StyleID="sHeader"><Data ss:Type="String">-</Data></Cell>
@@ -1769,6 +1903,15 @@ async function exportToExcel() {
                 }
             }
 
+            // Ячейка альтернативного времени (расчетная)
+            let altDurFormula = '';
+            if (r.unit === 'hour') {
+                altDurFormula = '=RC[-1]*60';
+            } else {
+                altDurFormula = '=RC[-1]/60';
+            }
+            const altDurCell = `<Cell ss:StyleID="${styleMap.durLocked}" ss:Formula="${altDurFormula}"><Data ss:Type="Number"></Data></Cell>`;
+
             // Ячейка паузы — переносим реальное значение паузы для каждой операции/строки
             // Правила защиты:
             // - Первая операция первой записи: защищённая (locked) — значение из данных (обычно 0)
@@ -1807,7 +1950,7 @@ async function exportToExcel() {
                     // offset = 5 (заголовок Z7 + разделители) + (z7.length * 2) т.к. после каждой строки Z7 пустая строка
                     const offset = 5 + (previousEntryData.z7.length * 2);
                     // Формула: (Конец пред. таблицы) + (Пауза этой строки), со сдвигом если попадает в обед
-                    const rawTimeRef = `(R[-${offset}]C[2] + RC[-6])`;
+                    const rawTimeRef = `(R[-${offset}]C[2] + RC[-7])`;
                     const chainFormula = buildLunchShiftFormula(rawTimeRef, lh, lm, lh2, lm2, ld);
                     startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="${escapeXml(chainFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                 } else {
@@ -1819,12 +1962,12 @@ async function exportToExcel() {
                 if (data.timeMode === 'individual') {
                     if ((curOpNum || 0) > 1) {
                         const prevKey = `${(curOpNum - 1)}_${r.workerIndex || 1}`;
-                        const keyCol = 15; // helper key column (_KEY) appended after end time (end time is col 14)
-                        const endCol = 14;
+                        const keyCol = 16; // helper key column (_KEY) appended after end time (end time is col 15)
+                        const endCol = 15;
                         const keyRange = `R${dataStartRow}C${keyCol}:R${dataEndRow}C${keyCol}`;
                         const endRange = `R${dataStartRow}C${endCol}:R${dataEndRow}C${endCol}`;
                         const lookupExpr = `INDEX(${endRange}, MATCH("${prevKey}", ${keyRange}, 0))`;
-                        const rawTimeWithPause = `(${lookupExpr}+RC[-6])`;
+                        const rawTimeWithPause = `(${lookupExpr}+RC[-7])`;
                         const startFormula = buildLunchShiftFormula(rawTimeWithPause, lh, lm, lh2, lm2, ld);
                         startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                     } else {
@@ -1832,7 +1975,7 @@ async function exportToExcel() {
                         if (curOpNum === prevRowOpNum) {
                             startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="=R[-1]C"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                         } else {
-                            const rawTimeWithPause = `(R[-1]C[2]+RC[-6])`;
+                            const rawTimeWithPause = `(R[-1]C[2]+RC[-7])`;
                             const startFormula = buildLunchShiftFormula(rawTimeWithPause, lh, lm, lh2, lm2, ld);
                             startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                         }
@@ -1843,8 +1986,8 @@ async function exportToExcel() {
                     } else {
                         // Начало операции (кроме первой) ссылается на конец предыдущей + пауза.
                         // Но если результат попадает в обед - сдвигаем на конец обеда.
-                        // RC[-6] = пауза текущей строки (столбец E, Пауза)
-                        const rawTimeWithPause = `(R[-1]C[2]+RC[-6])`;
+                        // RC[-7] = пауза текущей строки (столбец E, Пауза)
+                        const rawTimeWithPause = `(R[-1]C[2]+RC[-7])`;
                         const startFormula = buildLunchShiftFormula(rawTimeWithPause, lh, lm, lh2, lm2, ld);
                         startTimeCell = `<Cell ss:StyleID="${styleMap.timeLocked}" ss:Formula="${escapeXml(startFormula)}"><Data ss:Type="DateTime">${startTimeXml}</Data></Cell>`;
                     }
@@ -1861,24 +2004,27 @@ async function exportToExcel() {
             const l2End = `(TIME(${lh2},${lm2},0)+TIME(0,${ld},0))`;
             
             // --- ICONS (RC[7] = Start, RC[2] = Dur) ---
-            // JS логика: показать иконку если:
-            // 1) начало попадало в обед (в Excel уже сдвинуто на конец обеда)
-            // 2) начало < lunchStart И конец СТРОГО > lunchStart (накрывает обед)
-            // Условие 1: start ≈ lunchEnd (был сдвинут, проверяем с допуском 1 сек)
-            // Условие 2: start < lunchStart AND rawEnd > lunchStart + 1сек
-            const icRawEnd = `(RC[7]+(RC[2]/${unitDiv}))`;
-            const icWasShifted1 = `ABS(RC[7]-${l1End})<TIME(0,0,1)`;
-            const icCovers1 = `AND(RC[7]<${l1Val}, ${icRawEnd}>(${l1Val}+TIME(0,0,1)))`;
+            // Нормализуем время старта (MOD 1) для корректной работы при переходе через сутки
+            const startTimeMod = `MOD(RC[8], 1)`;
+            const endTimeRel = `(${startTimeMod}+(RC[2]/${unitDiv}))`;
+            
+            const l1EndMod = `MOD(${l1End}, 1)`;
+            const icWasShifted1 = `ABS(${startTimeMod}-${l1EndMod})<TIME(0,0,1)`;
+            const icCovers1 = `OR(AND(${startTimeMod}<${l1Val}, ${endTimeRel}>(${l1Val}+TIME(0,0,1))), AND(${startTimeMod}<(${l1Val}+1), ${endTimeRel}>(${l1Val}+1+TIME(0,0,1))))`;
+            
             const icC1 = `OR(${icWasShifted1}, ${icCovers1})`;
             const icShift1 = `IF(${icC1}, ${lDurVal}, 0)`;
             
             let formulaIcon;
             if (hasLunch2) {
-                // Для второго обеда: аналогичная логика с учётом сдвига от первого
-                const shiftedStart = `(RC[7]+${icShift1})`;
-                const shiftedEnd = `(${icRawEnd}+${icShift1})`;
-                const icWasShifted2 = `ABS(${shiftedStart}-${l2End})<TIME(0,0,1)`;
-                const icCovers2 = `AND(${shiftedStart}<${l2Val}, ${shiftedEnd}>(${l2Val}+TIME(0,0,1)))`;
+                // Сдвигаем старт на величину первого сдвига, затем нормализуем
+                const shiftedStartMod = `MOD(RC[8]+${icShift1}, 1)`;
+                const shiftedEndRel = `(${shiftedStartMod}+(RC[2]/${unitDiv}))`;
+                
+                const l2EndMod = `MOD(${l2End}, 1)`;
+                const icWasShifted2 = `ABS(${shiftedStartMod}-${l2EndMod})<TIME(0,0,1)`;
+                const icCovers2 = `OR(AND(${shiftedStartMod}<${l2Val}, ${shiftedEndRel}>(${l2Val}+TIME(0,0,1))), AND(${shiftedStartMod}<(${l2Val}+1), ${shiftedEndRel}>(${l2Val}+1+TIME(0,0,1))))`;
+                
                 const icC2 = `OR(${icWasShifted2}, ${icCovers2})`;
                 formulaIcon = `=IF(OR(${icC1}, ${icC2}), "🍽️", "")`;
             } else {
@@ -1887,22 +2033,24 @@ async function exportToExcel() {
             }
 
             // --- END TIME (RC[-2] = Start Time, RC[-7] = Dur) ---
-            // Условие: операция НАКРЫВАЕТ обед (начало ДО начала обеда И конец СТРОГО ПОСЛЕ начала обеда)
-            // Добавляем порог 1 секунда чтобы избежать погрешности floating point
-            // Если конец = началу обеда, обед НЕ добавляется
-            const rawEnd = `(RC[-2]+(RC[-7]/${unitDiv}))`;
-            const enC1 = `AND(RC[-2] < ${l1Val}, ${rawEnd} > (${l1Val}+TIME(0,0,1)))`;
+            // Нормализуем старт для проверки покрытия обеда
+            const stMod = `MOD(RC[-2], 1)`;
+            const rawEndRel = `(${stMod}+(RC[-8]/${unitDiv}))`;
+            
+            const enC1 = `OR(AND(${stMod} < ${l1Val}, ${rawEndRel} > (${l1Val}+TIME(0,0,1))), AND(${stMod} < (${l1Val}+1), ${rawEndRel} > (${l1Val}+1+TIME(0,0,1))))`;
             const enShift1 = `IF(${enC1}, ${lDurVal}, 0)`;
             
             let formulaEnd;
             if (hasLunch2) {
-                const shiftedEnd = `(${rawEnd} + ${enShift1})`;
-                const enC2 = `AND((RC[-2] + ${enShift1}) < ${l2Val}, ${shiftedEnd} > (${l2Val}+TIME(0,0,1)))`;
+                const stMod2 = `MOD(RC[-2] + ${enShift1}, 1)`;
+                const rawEndRel2 = `(${stMod2}+(RC[-8]/${unitDiv}))`;
+                
+                const enC2 = `OR(AND(${stMod2} < ${l2Val}, ${rawEndRel2} > (${l2Val}+TIME(0,0,1))), AND(${stMod2} < (${l2Val}+1), ${rawEndRel2} > (${l2Val}+1+TIME(0,0,1))))`;
                 const enShift2 = `IF(${enC2}, ${lDurVal}, 0)`;
-                formulaEnd = `=MOD(${rawEnd} + ${enShift1} + ${enShift2}, 1)`;
+                formulaEnd = `=MOD(RC[-2] + (RC[-8]/${unitDiv}) + ${enShift1} + ${enShift2}, 1)`;
             } else {
                 // Второй обед не задан - учитываем только первый
-                formulaEnd = `=MOD(${rawEnd} + ${enShift1}, 1)`;
+                formulaEnd = `=MOD(RC[-2] + (RC[-8]/${unitDiv}) + ${enShift1}, 1)`;
             }
 
             // Determine numericness for opIdx and worker to avoid Excel 'number stored as text' warnings
@@ -1919,12 +2067,13 @@ async function exportToExcel() {
 
             xmlBody += `
             <Row>
-                <Cell ss:Index="2" ss:StyleID="${styleMap.borderLocked}"><Data ss:Type="Number">${idx + 1}</Data></Cell>
+                <Cell ss:Index="2" ss:StyleID="${styleMap.borderLocked}"><Data ss:Type="Number">${r.originalOpIndex || (idx + 1)}</Data></Cell>
                 ${opIdxCell}
                 <Cell ss:StyleID="${styleMap.borderLeftLocked}"><Data ss:Type="String">${escapeXml(excelSanitizeCell(r.name))}</Data></Cell>
                 <Cell ss:StyleID="${styleMap.iconLocked}" ss:Formula="${escapeXml(formulaIcon)}"><Data ss:Type="String">${r.crossedLunch ? '🍽️' : ''}</Data></Cell>
                 ${pauseCell}
                 ${durCell}
+                ${altDurCell}
                 <Cell ss:StyleID="${styleMap.dateLocked}"><Data ss:Type="DateTime">${postingXml}</Data></Cell>
                 ${workerCell}
                 <Cell ss:StyleID="${styleMap.borderLocked}"><Data ss:Type="String"></Data></Cell>
@@ -1944,7 +2093,7 @@ async function exportToExcel() {
 
             xmlBody += `
             <Row>
-                <Cell ss:Index="2" ss:MergeAcross="13" ss:StyleID="sTitle"><Data ss:Type="String">Z7</Data></Cell>
+                <Cell ss:Index="2" ss:MergeAcross="14" ss:StyleID="sTitle"><Data ss:Type="String">Z7</Data></Cell>
             </Row>
             `;
             // one row for Z7 title
@@ -1965,10 +2114,10 @@ async function exportToExcel() {
 
             xmlBody += `
             <Row${heightAttr}>
-                    <Cell ss:Index="2" ss:MergeAcross="13" ss:StyleID="sZ7Locked"><Data ss:Type="String">${escapeXml(sanitizedZ7)}</Data></Cell>
+                    <Cell ss:Index="2" ss:MergeAcross="14" ss:StyleID="sZ7Locked"><Data ss:Type="String">${escapeXml(sanitizedZ7)}</Data></Cell>
             </Row>
             <Row>
-                <Cell ss:Index="2" ss:MergeAcross="13" ss:StyleID="sZ7Locked"><Data ss:Type="String"></Data></Cell>
+                <Cell ss:Index="2" ss:MergeAcross="14" ss:StyleID="sZ7Locked"><Data ss:Type="String"></Data></Cell>
             </Row>
             `;
             // two rows per Z7 line
@@ -2227,18 +2376,19 @@ function buildExcelXml(xmlBody, sheetName) {
     <Column ss:Width="10" ss:StyleID="sTextLocked"/> <!-- A -->
     <Column ss:Width="20" ss:StyleID="sTextLocked"/> <!-- B -->
     <Column ss:Width="50" ss:StyleID="sTextLocked"/> <!-- C -->
-    <Column ss:Width="400" ss:StyleID="sTextLocked"/> <!-- D -->
+    <Column ss:Width="340" ss:StyleID="sTextLocked"/> <!-- D -->
     <Column ss:Width="40" ss:StyleID="sTextLocked"/> <!-- E -->
     <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- F -->
     <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- G -->
-    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- H -->
+    <Column ss:Width="80" ss:StyleID="sTextLocked"/> <!-- H -->
     <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- I -->
-    <Column ss:Width="20" ss:StyleID="sTextLocked"/> <!-- J -->
-    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- K -->
+    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- J -->
+    <Column ss:Width="20" ss:StyleID="sTextLocked"/> <!-- K -->
     <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- L -->
     <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- M -->
     <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- N -->
-    <Column ss:Width="50" ss:StyleID="sTextLocked"/> <!-- O -->
+    <Column ss:Width="100" ss:StyleID="sTextLocked"/> <!-- O -->
+    <Column ss:Width="50" ss:StyleID="sTextLocked"/> <!-- P -->
      ${xmlBody}
     </Table>
   <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
@@ -2301,16 +2451,30 @@ async function downloadExcelFile(xmlContent) {
 
 // === УПРАВЛЕНИЕ ТЕХКАРТАМИ ===
 function getCardData() {
-    return Array.from(document.querySelectorAll('.op-block')).map(b => ({
-        // Сохраняем имя операции без порядкового префикса
-        name: sanitizeStrict(stripOrdinalPrefix(b.querySelector('.op-header-input').value), 200),
-        dur: Math.max(0, Number.parseFloat(b.querySelector('.op-duration').value) || 0),
-        unit: b.querySelector('.op-unit').value,
-        // hasBreak: derive from break value (no checkbox now)
-        hasBreak: (Math.max(0, Number.parseFloat(b.querySelector('.op-break-val').value) || 0) > 0),
-        breakVal: Math.max(0, Number.parseFloat(b.querySelector('.op-break-val').value) || 0),
-        breakUnit: b.querySelector('.op-break-unit').value
-    }));
+    return Array.from(document.querySelectorAll('.op-block')).map(b => {
+        const durInput = b.querySelector('.op-duration');
+        const breakInput = b.querySelector('.op-break-val');
+        
+        // If values are temporarily zeroed (e.g. Individual mode), retrieve saved valid values
+        const durRaw = (durInput && durInput.dataset.savedVal !== undefined) 
+            ? durInput.dataset.savedVal 
+            : (durInput ? durInput.value : 0);
+            
+        const breakRaw = (breakInput && breakInput.dataset.savedVal !== undefined)
+            ? breakInput.dataset.savedVal
+            : (breakInput ? breakInput.value : 0);
+
+        return {
+            // Сохраняем имя операции без порядкового префикса
+            name: sanitizeStrict(stripOrdinalPrefix(b.querySelector('.op-header-input').value), 200),
+            dur: Math.max(0, Number.parseFloat(durRaw) || 0),
+            unit: b.querySelector('.op-unit').value,
+            // hasBreak: derive from break value (no checkbox now)
+            hasBreak: (Math.max(0, Number.parseFloat(breakRaw) || 0) > 0),
+            breakVal: Math.max(0, Number.parseFloat(breakRaw) || 0),
+            breakUnit: b.querySelector('.op-break-unit').value
+        };
+    });
 }
 
 function setCardData(steps) {
@@ -2318,6 +2482,7 @@ function setCardData(steps) {
         alert('Ошибка: некорректные данные шаблона');
         return;
     }
+    if (document.getElementById('opsSortMode')) document.getElementById('opsSortMode').value = 'sequential';
 
     document.getElementById('totalOps').value = Math.min(steps.length, 20);
     container.textContent = '';
@@ -2416,6 +2581,7 @@ document.getElementById('clearBtn').addEventListener('click', async () => {
     // Reset form fields to defaults (like F5) but keep history
     const defaults = getFormDefaults();
 
+    if (document.getElementById('opsSortMode')) document.getElementById('opsSortMode').value = defaults.sortMode || 'sequential';
     try {
         // If user has saved a config in localStorage, prefer restoring it for these controls
         let cfg = null;
@@ -2439,7 +2605,7 @@ document.getElementById('clearBtn').addEventListener('click', async () => {
         document.getElementById('lunchStart').value = (cfg && cfg.lunchStart) ? cfg.lunchStart : defaults.lunchStart;
         document.getElementById('lunchStart2').value = (cfg && cfg.lunchStart2) ? cfg.lunchStart2 : defaults.lunchStart2;
         document.getElementById('lunchDur').value = (cfg && cfg.lunchDur !== undefined) ? cfg.lunchDur : defaults.lunchDur;
-        // Always reset timeMode to default ('total') on Clear (do not restore persisted value)
+        // Reset timeMode to user default (from Settings)
         try { if (document.getElementById('timeMode')) document.getElementById('timeMode').value = defaults.timeMode; } catch(e) {}
         document.getElementById('resIz').value = defaults.resIz;
         document.getElementById('coefK').value = defaults.coefK;
@@ -2467,11 +2633,13 @@ document.getElementById('clearBtn').addEventListener('click', async () => {
         workerIds = [];
         operationFirstId = '';
         lastOperationIndex = null;
+        penultimateOperationIndex = null;
         // Re-render modal lists if open
         const wModal = document.getElementById('workersModal');
         const oModal = document.getElementById('opsModal');
         if (wModal && wModal.classList.contains('active')) renderWorkersInputList();
         if (oModal && oModal.classList.contains('active')) renderOpsInputList();
+        updateLunch2Label();
     } catch (e) {
         console.debug?.('clearBtn reset state error:', e?.message);
     }
@@ -2481,16 +2649,18 @@ document.getElementById('clearBtn').addEventListener('click', async () => {
 });
 
 // Handler for destructive Reset button: clears most localStorage and reset fields to defaults
+// Сохраняет: настройки (z7_defaults), техкарты (z7_card_*), историю (z7_history_session),
+//            заметки исполнителей (z7_workers_cheat) и конфиг обедов (z7_config).
 document.getElementById('resetBtn').addEventListener('click', async () => {
-    const msg = 'Сбросить все поля и очистить локальное хранилище?\nИстория расчетов, сохранённые техкарты и заметки исполнителей сохранятся.';
+    const msg = 'Сбросить все поля?\nИстория, техкарты, настройки и заметки исполнителей сохранятся.';
     if (!await confirmAction(msg)) return;
 
     const defaults = getFormDefaults();
 
     try {
-        // Clear localStorage except preserved keys: history, tech cards, workers cheat
+        // Clear localStorage except preserved keys
         const preservePrefixes = ['z7_card_'];
-        const preserveKeys = new Set(['z7_history_session', 'z7_workers_cheat']);
+        const preserveKeys = new Set(['z7_history_session', 'z7_workers_cheat', DEFAULTS_KEY, CONFIG_KEY]);
         const allKeys = Array.from(Object.keys(localStorage));
         for (const k of allKeys) {
             if (preserveKeys.has(k)) continue;
@@ -2498,7 +2668,7 @@ document.getElementById('resetBtn').addEventListener('click', async () => {
             try { await safeLocalStorageRemove(k); } catch (e) { try { localStorage.removeItem(k); } catch (ee) {} }
         }
 
-        // Reset UI fields to defaults (full reset)
+        // Reset UI fields to defaults (учитывая пользовательские умолчания)
         document.getElementById('totalOps').value = defaults.totalOps;
         document.getElementById('workerCount').value = defaults.workerCount;
         document.getElementById('startDate').value = defaults.startDate;
@@ -2509,6 +2679,7 @@ document.getElementById('resetBtn').addEventListener('click', async () => {
         document.getElementById('lunchStart2').value = defaults.lunchStart2;
         document.getElementById('lunchDur').value = defaults.lunchDur;
         try { if (document.getElementById('timeMode')) document.getElementById('timeMode').value = defaults.timeMode; } catch(e){}
+        try { if (document.getElementById('opsSortMode')) document.getElementById('opsSortMode').value = defaults.sortMode || 'sequential'; } catch(e){}
         document.getElementById('resIz').value = defaults.resIz;
         document.getElementById('coefK').value = defaults.coefK;
         document.getElementById('orderName').value = defaults.orderName;
@@ -2529,6 +2700,9 @@ document.getElementById('resetBtn').addEventListener('click', async () => {
         // Re-render blank operation blocks
         try { renderFields(); } catch (e) {}
 
+        lastOperationIndex = null;
+        penultimateOperationIndex = null;
+        updateLunch2Label();
         await showMessage('Сброс выполнен', 'Готово');
     } catch (e) {
         console.error('Reset error', e);
@@ -2554,7 +2728,7 @@ document.getElementById('saveCardBtn').addEventListener('click', async () => {
     name = sanitizeStrict(String(name), 100).trim();
     // Блокируем потенциально опасные имена ключей (prototype pollution и т.п.)
     if (name.length === 0 || name.includes('__proto__') || name.includes('constructor') || name.includes('prototype')) {
-        await showMessage('Название не может быть пустым или содержать недопустимые последовательности', 'Ошибка', 'error');
+        await showMessage('Название не может быть пуст������м или содержать недопустимые последовательности', 'Ошибка', 'error');
         return;
     }
 
@@ -2576,12 +2750,249 @@ document.getElementById('deleteCardBtn').addEventListener('click', async () => {
     }
 });
 
+// === Модальное окно "Синтаксический Анализ" ===
+(function initAnalyzeModal() {
+    const modal = document.getElementById('analyzeModal');
+    if (!modal) return;
+
+    const closeBtn = document.getElementById('closeAnalyzeModal');
+    const cancelBtn = document.getElementById('analyzeModalCancelBtn');
+    const saveBtn = document.getElementById('analyzeModalSaveBtn');
+    const nameInput = document.getElementById('analyzeCardName');
+    const opsText = document.getElementById('analyzeOpsText');
+    const unitSelect = document.getElementById('analyzeUnit');
+
+    function openAnalyzeModal() {
+        // Очищаем поля при открытии
+        nameInput.value = '';
+        opsText.value = '';
+        unitSelect.value = 'min';
+        modal.classList.add('active');
+        nameInput.focus();
+    }
+
+    function closeAnalyzeModal() {
+        modal.classList.remove('active');
+    }
+
+    // Парсинг текста операций: каждая строка — "Название длительность"
+    function parseOpsText(text) {
+        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+        const ops = [];
+        const errors = [];
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            // Ищем последнее число в строке — это длительность
+            const match = line.match(/^(.+)\s+(\d+(?:[.,]\d{1,2})?)\s*$/);
+            if (!match) {
+                errors.push(`Строка ${i + 1}: не удалось распознать — "${line}"`);
+                continue;
+            }
+            const opName = match[1].trim();
+            const durStr = match[2].replace(',', '.');
+            const dur = Number.parseFloat(durStr);
+            if (!opName || opName.length === 0) {
+                errors.push(`Строка ${i + 1}: пустое название операции`);
+                continue;
+            }
+            if (Number.isNaN(dur) || dur < 0) {
+                errors.push(`Строка ${i + 1}: некорректная длительность — "${match[2]}"`);
+                continue;
+            }
+            ops.push({ name: sanitizeStrict(opName, 200), dur });
+        }
+
+        return { ops, errors };
+    }
+
+    // Кнопка "Сохранить"
+    saveBtn.addEventListener('click', async () => {
+        const cardName = sanitizeStrict(nameInput.value, 100).trim();
+        if (!cardName || cardName.length === 0) {
+            await showMessage('Введите название техкарты', 'Ошибка', 'error');
+            nameInput.focus();
+            return;
+        }
+        if (cardName.includes('__proto__') || cardName.includes('constructor') || cardName.includes('prototype')) {
+            await showMessage('Название содержит недопустимые последовательности', 'Ошибка', 'error');
+            return;
+        }
+
+        const rawOps = opsText.value.trim();
+        if (!rawOps) {
+            await showMessage('Введите операции и длительности', 'Ошибка', 'error');
+            opsText.focus();
+            return;
+        }
+
+        const { ops, errors } = parseOpsText(rawOps);
+
+        if (errors.length > 0) {
+            await showMessage('Ошибки парсинга:\n' + errors.join('\n'), 'Синтаксический Анализ', 'error');
+            return;
+        }
+
+        if (ops.length === 0) {
+            await showMessage('Не найдено ни одной операции', 'Ошибка', 'error');
+            return;
+        }
+
+        if (ops.length > 20) {
+            await showMessage('Максимум 20 операций', 'Ошибка', 'error');
+            return;
+        }
+
+        const unit = unitSelect.value;
+
+        // Формируем массив шагов в формате техкарты
+        const steps = ops.map(op => ({
+            name: op.name,
+            dur: op.dur,
+            unit: unit,
+            hasBreak: false,
+            breakVal: 0,
+            breakUnit: 'min'
+        }));
+
+        // Валидируем через существующую функцию
+        if (!validateCardData(steps)) {
+            await showMessage('Данные не прошли валидацию', 'Ошибка', 'error');
+            return;
+        }
+
+        // Проверяем, существует ли уже техкарта с таким именем
+        const storageKey = 'z7_card_' + cardName;
+        if (localStorage.getItem(storageKey) !== null) {
+            const overwrite = await confirmAction(`Техкарта "${cardName}" уже существует.\nПерезаписать?`);
+            if (!overwrite) return;
+        }
+
+        // Сохраняем в localStorage
+        await safeLocalStorageSet(storageKey, JSON.stringify(steps));
+        loadTechCards();
+        closeAnalyzeModal();
+        await showMessage(`Техкарта "${cardName}" сохранена (${ops.length} операций)`, 'Успешно');
+    });
+
+    // Закрытие модалки
+    closeBtn.addEventListener('click', closeAnalyzeModal);
+    cancelBtn.addEventListener('click', closeAnalyzeModal);
+
+    // Открытие по кнопке 🔍
+    document.getElementById('analyzeCardBtn')?.addEventListener('click', openAnalyzeModal);
+})();
+
+// === Модальное окно "Настройки" ===
+(function initSettingsModal() {
+    const modal = document.getElementById('settingsModal');
+    if (!modal) return;
+
+    const closeBtn = document.getElementById('closeSettingsModal');
+    const saveBtn = document.getElementById('settingsSaveBtn');
+    const resetBtn = document.getElementById('settingsResetBtn');
+    const cancelBtn = document.getElementById('settingsCancelBtn');
+
+    // Элементы формы настроек
+    const defTheme = document.getElementById('defTheme');
+    const defChainMode = document.getElementById('defChainMode');
+    const defTimeMode = document.getElementById('defTimeMode');
+    const defStatusBefore = document.getElementById('defStatusBefore');
+    const defWorkExtra = document.getElementById('defWorkExtra');
+    const defDevRec = document.getElementById('defDevRec');
+    const defSortMode = document.getElementById('defSortMode');
+
+    function populateFromStorage() {
+        const d = getUserDefaults();
+        defTheme.value = d.theme || 'light';
+        defChainMode.checked = d.chainMode;
+        defTimeMode.value = d.timeMode;
+        defStatusBefore.value = d.statusBefore;
+        defWorkExtra.value = d.workExtra;
+        defDevRec.value = d.devRec;
+        defSortMode.value = d.sortMode;
+    }
+
+    // Мгновенный предпросмотр темы при переключении селектора
+    defTheme.addEventListener('change', () => {
+        applyTheme(defTheme.value);
+    });
+
+    function openSettingsModal() {
+        populateFromStorage();
+        modal.classList.add('active');
+        defStatusBefore.focus();
+    }
+
+    function closeSettingsModal() {
+        modal.classList.remove('active');
+        // Откатываем предпросмотр темы к сохранённому значению
+        const saved = getUserDefaults();
+        applyTheme(saved.theme || 'light');
+    }
+
+    // Сохранить пользовательские умолчания
+    saveBtn.addEventListener('click', async () => {
+        const data = {
+            theme: defTheme.value || 'light',
+            chainMode: !!defChainMode.checked,
+            timeMode: defTimeMode.value || 'total',
+            statusBefore: sanitizeStrict(defStatusBefore.value || '', 300),
+            workExtra: sanitizeStrict(defWorkExtra.value || '', 300),
+            devRec: sanitizeStrict(defDevRec.value || '', 300),
+            sortMode: defSortMode.value || 'sequential'
+        };
+        // Применяем тему сразу
+        applyTheme(data.theme);
+        try {
+            await safeLocalStorageSet(DEFAULTS_KEY, JSON.stringify(data));
+            closeSettingsModal();
+            await showMessage('Настройки сохранены', 'Готово');
+        } catch (e) {
+            console.error('Settings save error:', e);
+            await showMessage('Ошибка сохранения настроек', 'Ошибка', 'error');
+        }
+    });
+
+    // Сбросить к встроенным и удалить из localStorage
+    resetBtn.addEventListener('click', async () => {
+        if (!await confirmAction('Вернуть встроенные значения по умолчанию?')) return;
+        try {
+            await safeLocalStorageRemove(DEFAULTS_KEY);
+            populateFromStorage(); // перечитает встроенные
+            applyTheme('light'); // встроенная тема — светлая
+            await showMessage('Настройки сброшены к встроенным', 'Готово');
+        } catch (e) {
+            console.error('Settings reset error:', e);
+        }
+    });
+
+    closeBtn.addEventListener('click', closeSettingsModal);
+    cancelBtn.addEventListener('click', closeSettingsModal);
+
+    // Закрытие по Escape
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && modal.classList.contains('active')) {
+            closeSettingsModal();
+        }
+    });
+
+    // Открытие по кнопке "Настройки"
+    document.getElementById('settingsBtn')?.addEventListener('click', openSettingsModal);
+})();
+
 document.getElementById('techCardSelect').addEventListener('change', (e) => {
     if (e.target.value !== 'manual') {
         try {
             const data = safeJsonParse(localStorage.getItem(e.target.value));
             if (data) {
                 setCardData(data);
+            }
+            // Заполняем поле "Наименование" названием техкарты
+            const cardName = e.target.value.replace(/^z7_card_/, '');
+            const itemNameEl = document.getElementById('itemName');
+            if (itemNameEl && cardName) {
+                itemNameEl.value = cardName;
             }
         } catch (err) {
             console.error('Ошибка загрузки шаблона:', err);
@@ -2634,6 +3045,25 @@ document.getElementById('importBtn').addEventListener('click', () => {
     document.getElementById('fileInput').click();
 });
 
+document.getElementById('opsSortMode').addEventListener('change', (e) => {
+    const container = document.getElementById('fieldsContainer');
+    const blocks = Array.from(container.children);
+    const sortMode = e.target.value;
+    
+    if (sortMode === 'confirmation') {
+        blocks.sort((a, b) => (Number(a.dataset.opId) || 0) - (Number(b.dataset.opId) || 0));
+    } else {
+        blocks.sort((a, b) => {
+            const idxA = Number(a.dataset.originalIndex) || 0;
+            const idxB = Number(b.dataset.originalIndex) || 0;
+            return idxA - idxB;
+        });
+    }
+    
+    blocks.forEach(b => container.appendChild(b));
+    try { updateMainOperationLabels(); updateOperationInputPrefixes(); } catch (e) { /* ignore */ }
+});
+
 document.getElementById('fileInput').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -2680,6 +3110,22 @@ updateFirstPauseVisibility();
 
 // === PERSISTENT CONFIG (timeMode + lunch settings) ===
 const CONFIG_KEY = 'z7_config';
+
+function updateLunch2Label() {
+    const input = document.getElementById('lunchStart2');
+    if (!input) return;
+    const label = document.querySelector('label[for="lunchStart2"]');
+    if (!label) return;
+    
+    if (input.value === '00:00') {
+        label.style.textDecoration = 'line-through';
+        label.style.opacity = '0.6';
+    } else {
+        label.style.textDecoration = 'none';
+        label.style.opacity = '1';
+    }
+}
+
 function saveConfig() {
     try {
         const cfg = {
@@ -2702,6 +3148,7 @@ function loadConfig() {
         if (cfg.lunchDur !== undefined && document.getElementById('lunchDur')) document.getElementById('lunchDur').value = cfg.lunchDur;
         if (cfg.postingDate && document.getElementById('postingDate')) document.getElementById('postingDate').value = cfg.postingDate;
         try { updateWorkerUIByTimeMode(); } catch (e) {}
+        updateLunch2Label();
         return cfg;
     } catch (e) { console.debug?.('loadConfig error', e?.message); return null; }
 }
@@ -2714,13 +3161,33 @@ try {
         if (!el) return;
         el.addEventListener('change', saveConfig);
         el.addEventListener('input', saveConfig);
+        if (id === 'lunchStart2') {
+            el.addEventListener('input', updateLunch2Label);
+            el.addEventListener('change', updateLunch2Label);
+        }
     });
 } catch (e) { console.debug?.('attach saveConfig listeners failed', e?.message); }
 
 // Load persisted config now (so Clear/Reload restores these values)
 loadConfig();
-// Ensure timeMode is not restored from storage: always start in default 'total' on load/refresh
-try { const tEl = document.getElementById('timeMode'); if (tEl) { tEl.value = 'total'; updateWorkerUIByTimeMode(); } } catch(e) { console.debug?.('reset timeMode default error', e?.message); }
+// Apply user defaults for settings-controlled fields on every load/refresh
+try {
+    const _ud = getUserDefaults();
+    const tEl = document.getElementById('timeMode');
+    if (tEl) { tEl.value = _ud.timeMode || 'total'; updateWorkerUIByTimeMode(); }
+    const cEl = document.getElementById('chainMode');
+    if (cEl) cEl.checked = _ud.chainMode;
+    const sbEl = document.getElementById('statusBefore');
+    if (sbEl) sbEl.value = _ud.statusBefore;
+    const weEl = document.getElementById('workExtra');
+    if (weEl) weEl.value = _ud.workExtra;
+    const drEl = document.getElementById('devRec');
+    if (drEl) drEl.value = _ud.devRec;
+    const smEl = document.getElementById('opsSortMode');
+    if (smEl) smEl.value = _ud.sortMode || 'sequential';
+} catch(e) { console.debug?.('apply user defaults error', e?.message); }
+updateLunch2Label();
+
 
 // === МОДАЛЬНОЕ ОКНО "О ПРОГРАММЕ" ===
 let aboutTextCache = null;
@@ -2753,12 +3220,6 @@ document.getElementById('closeAboutModal').addEventListener('click', () => {
     document.getElementById('aboutModal').classList.remove('active');
 });
 
-document.getElementById('aboutModal').addEventListener('click', (e) => {
-    if (e.target.id === 'aboutModal') {
-        document.getElementById('aboutModal').classList.remove('active');
-    }
-});
-
 // Закрытие по Escape
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
@@ -2782,23 +3243,33 @@ function getOperationLabel(index, totalOps) {
     if (!operationFirstId || operationFirstId.trim() === '') {
         return String(index); // По умолчанию порядковый номер
     }
-    
+
     const firstNum = Number.parseInt(operationFirstId, 10);
     if (Number.isNaN(firstNum)) return String(index);
-    
+
     // Если эта операция отмечена как "последняя" - присваиваем ей последний номер
     if (lastOperationIndex !== null && index === lastOperationIndex) {
         const lastNum = firstNum + (totalOps - 1);
         return String(lastNum).padStart(8, '0');
     }
-    
+
+    // Если эта операция отмечена как "предпоследняя"
+    if (penultimateOperationIndex !== null && index === penultimateOperationIndex) {
+        const penNum = firstNum + (totalOps - 2);
+        return String(penNum).padStart(8, '0');
+    }
+
     // Для остальных операций: считаем позицию без учёта "последней"
     let position = index;
+    // Вычитаем 1 за каждую спец. операцию, которая находится перед текущей (по индексу)
+    // Но проще считать последовательно, пропуская спец. индексы
     if (lastOperationIndex !== null && index > lastOperationIndex) {
-        // Если текущая операция после "последней", сдвигаем номер на 1 назад
         position = index - 1;
     }
-    
+    if (penultimateOperationIndex !== null && index > penultimateOperationIndex) {
+        position = position - 1;
+    }
+
     const opNum = firstNum + (position - 1);
     return String(opNum).padStart(8, '0');
 }
@@ -2812,7 +3283,11 @@ function updateMainOperationLabels() {
         const lbl = blk.querySelector('.op-num-label');
         if (lbl) {
             try {
-                lbl.textContent = getOperationLabel(i + 1, total);
+                if (blk.dataset.opId) {
+                    lbl.textContent = blk.dataset.opId;
+                } else {
+                    lbl.textContent = getOperationLabel(i + 1, total);
+                }
             } catch (e) {
                 // Safety: do not break UI if getOperationLabel fails
                 lbl.textContent = String(i + 1);
@@ -2828,7 +3303,8 @@ function updateOperationInputPrefixes() {
     blocks.forEach((blk, i) => {
         const inp = blk.querySelector('.op-header-input');
         if (!inp) return;
-        const prefix = `${i + 1}) `;
+        const idx = blk.dataset.originalIndex ? blk.dataset.originalIndex : (i + 1);
+        const prefix = `${idx}) `;
         const body = stripOrdinalPrefix(inp.value || '');
         inp.value = prefix + sanitizeStrict(body, 200);
     });
@@ -2838,15 +3314,23 @@ function renderOpsInputList() {
     const container = document.getElementById('opsInputList');
     const count = Number.parseInt(document.getElementById('totalOps').value, 10) || 1;
     container.innerHTML = '';
-    
+
+    // Сброс индексов, если они выходят за пределы количества операций
+    if (lastOperationIndex !== null && lastOperationIndex > count) {
+        lastOperationIndex = null;
+        penultimateOperationIndex = null;
+    }
+    if (penultimateOperationIndex !== null && penultimateOperationIndex > count) penultimateOperationIndex = null;
+
     // Получаем названия операций из полей ввода
     const opBlocks = document.querySelectorAll('.op-block');
-    
+
     for (let i = 1; i <= count; i++) {
         const row = createEl('div', { className: 'op-input-row' });
-        
+
         // Берём название операции из соответствующего блока
         let opName = `Операция ${i}`;
+        const block = opBlocks[i - 1];
         if (opBlocks[i - 1]) {
             const nameInput = opBlocks[i - 1].querySelector('.op-header-input');
             if (nameInput && nameInput.value.trim()) {
@@ -2854,76 +3338,151 @@ function renderOpsInputList() {
                 opName = nameInput.value.trim();
             }
         }
-        
+
         const label = createEl('label', { className: 'op-label', htmlFor: `op_id_${i}` }, `${opName}:`);
-        
-        // Для первой операции - редактируемый input, для остальных - disabled
+
+        // Для первой операции - редактируемый input, для остальных - disabled или enabled depending on auto checkbox
         const isFirst = (i === 1);
         const input = createEl('input', {
             type: 'text',
             id: `op_id_${i}`,
             name: `op_id_${i}`,
             maxLength: '8',
-            placeholder: isFirst ? '00000000' : 'авто',
+            placeholder: isFirst ? '00000000' : 'Номер ПДТВ',
             autocomplete: 'off'
         });
-        
+
         if (isFirst) {
-            input.value = operationFirstId || '';
+            if (block && block.dataset.opId) {
+                input.value = block.dataset.opId;
+                operationFirstId = block.dataset.opId;
+            } else {
+                input.value = operationFirstId || '';
+            }
             // Разрешаем только цифры
             input.addEventListener('input', (e) => {
                 e.target.value = e.target.value.replaceAll(/[^0-9]/g, '').substring(0, 8);
                 updateOpsCalculatedValues();
             });
-        } else {
-            input.disabled = true;
-            // Рассчитываем значение с учётом галочки "последняя"
-            if (operationFirstId && operationFirstId.trim()) {
-                const firstNum = Number.parseInt(operationFirstId, 10);
-                if (!Number.isNaN(firstNum)) {
-                    // Если эта операция отмечена как "последняя" - показываем последний номер
-                    if (lastOperationIndex === i) {
-                        const lastNum = firstNum + (count - 1);
-                        input.value = String(lastNum).padStart(8, '0');
-                    } else {
-                        // Считаем позицию без учёта "последней"
-                        let position = i;
-                        if (lastOperationIndex !== null && i > lastOperationIndex) {
-                            position = i - 1;
-                        }
-                        input.value = String(firstNum + (position - 1)).padStart(8, '0');
+
+            // Создаем контейнер для чекбокса "авто", чтобы выровнять с чекбоксами "последняя"
+            const autoCheckboxWrapper = createEl('div', { className: 'op-checkbox-wrapper' });
+            const autoCheckbox = createEl('input', {
+                type: 'checkbox',
+                id: 'op_auto_checkbox',
+                name: 'op_auto'
+            });
+            autoCheckbox.checked = autoIncrementEnabled;  // Используем сохраненное состояние
+
+            autoCheckbox.addEventListener('change', (e) => {
+                const isChecked = e.target.checked;
+
+                // Обновляем состояние переменной
+                autoIncrementEnabled = isChecked;
+
+                // Обновляем состояния полей ввода и чекбоксов "последняя"
+                for (let j = 2; j <= count; j++) {
+                    const inputField = document.getElementById(`op_id_${j}`);
+                    const lastCheckbox = document.getElementById(`op_special_${j}`);
+
+                    if (inputField) {
+                        inputField.disabled = isChecked;
+                    }
+                    if (lastCheckbox) {
+                        lastCheckbox.disabled = !isChecked;
                     }
                 }
+
+                // Обновляем значения полей ввода
+                updateOpsCalculatedValues();
+            });
+
+            const autoCheckboxLabel = createEl('label', { htmlFor: 'op_auto_checkbox' }, 'авто');
+            autoCheckboxWrapper.append(autoCheckbox, autoCheckboxLabel);
+
+            // Добавляем элемент в строку после input, чтобы чекбокс "авто" был правее поля ввода
+            row.append(label, input, autoCheckboxWrapper);
+        } else {
+            // Для остальных операций определяем, нужно ли разблокировать поле ввода
+            if (autoIncrementEnabled) {
+                // Если автоподсчет включен, поле заблокировано
+                input.disabled = true;
+            } else {
+                // Если автоподсчет выключен, поле разблокировано
+                input.disabled = false;
             }
-        }
-        
-        // Галочка "последняя операция" (только для операций кроме первой)
-        const checkboxWrapper = createEl('div', { 
-            className: `op-checkbox-wrapper ${isFirst ? 'hidden' : ''}` 
-        });
-        const checkbox = createEl('input', {
-            type: 'checkbox',
-            id: `op_last_${i}`,
-            name: 'op_last'
-        });
-        checkbox.checked = (lastOperationIndex === i);
-        checkbox.dataset.opIndex = i;
-        
-        checkbox.addEventListener('change', (e) => {
-            if (e.target.checked) {
-                // Снимаем все остальные галочки
-                document.querySelectorAll('#opsInputList input[name="op_last"]').forEach(cb => {
-                    if (cb !== e.target) cb.checked = false;
+
+            // Рассчитываем значение с учётом галочки "последняя"
+            if (block && block.dataset.opId) {
+                input.value = block.dataset.opId;
+            } else if (operationFirstId && operationFirstId.trim()) {
+                const firstNum = Number.parseInt(operationFirstId, 10);
+                if (!Number.isNaN(firstNum)) {
+                    // Используем общую логику расчета
+                    input.value = getOperationLabel(i, count);
+                }
+            }
+
+            // Логика чекбоксов "последняя" / "предпоследняя"
+            const checkboxWrapper = createEl('div', {
+                className: 'op-checkbox-wrapper'
+            });
+            
+            const checkbox = createEl('input', {
+                type: 'checkbox',
+                id: `op_special_${i}`,
+                name: 'op_special'
+            });
+            checkbox.disabled = !autoIncrementEnabled; // Чекбокс "последняя" доступен только при включенном "авто"
+            
+            let labelText = 'последняя ';
+
+            if (lastOperationIndex !== null) {
+                if (i === lastOperationIndex) {
+                    // Это выбранная последняя операция
+                    checkbox.checked = true;
+                    labelText = 'последняя ';
+                    checkbox.addEventListener('change', () => {
+                        // Снятие галочки "последняя" сбрасывает и "предпоследнюю"
+                        lastOperationIndex = null;
+                        penultimateOperationIndex = null;
+                        renderOpsInputList();
+                        updateOpsCalculatedValues();
+                    });
+                } else {
+                    // Остальные становятся "предпоследняя"
+                    checkbox.checked = (i === penultimateOperationIndex);
+                    labelText = 'предпоследняя';
+                    checkbox.addEventListener('change', (e) => {
+                        if (e.target.checked) {
+                            penultimateOperationIndex = i;
+                        } else {
+                            penultimateOperationIndex = null;
+                        }
+                        renderOpsInputList();
+                        updateOpsCalculatedValues();
+                    });
+                }
+            } else {
+                // Ни одна операция не выбрана как последняя
+                checkbox.checked = false;
+                labelText = 'последняя';
+                checkbox.addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        lastOperationIndex = i;
+                        penultimateOperationIndex = null;
+                    }
+                    renderOpsInputList();
+                    updateOpsCalculatedValues();
                 });
             }
-            // Обновляем отображаемые номера
-            updateOpsCalculatedValues();
-        });
+
+            const checkboxLabel = createEl('label', { htmlFor: `op_special_${i}` }, labelText);
+            checkboxWrapper.append(checkbox, checkboxLabel);
+
+            row.append(label, input, checkboxWrapper);
+        }
         
-        const checkboxLabel = createEl('label', { htmlFor: `op_last_${i}` }, 'последняя');
-        checkboxWrapper.append(checkbox, checkboxLabel);
-        
-        row.append(label, input, checkboxWrapper);
         container.append(row);
     }
 }
@@ -2931,41 +3490,36 @@ function renderOpsInputList() {
 function updateOpsCalculatedValues() {
     const firstInput = document.getElementById('op_id_1');
     if (!firstInput) return;
-    
+
     const firstVal = firstInput.value.trim();
+    operationFirstId = firstVal;
     const count = Number.parseInt(document.getElementById('totalOps').value, 10) || 1;
-    
-    // Находим, какая операция отмечена как "последняя"
-    let markedLastIndex = null;
-    document.querySelectorAll('#opsInputList input[name="op_last"]').forEach(cb => {
-        if (cb.checked) {
-            markedLastIndex = Number.parseInt(cb.dataset.opIndex, 10);
-        }
-    });
-    
+
+    // Проверяем, включена ли функция "авто"
+    const isAutoEnabled = autoIncrementEnabled;
+
     for (let i = 2; i <= count; i++) {
         const input = document.getElementById(`op_id_${i}`);
         if (input) {
-            if (firstVal && firstVal.length > 0) {
-                const firstNum = Number.parseInt(firstVal, 10);
-                if (!Number.isNaN(firstNum)) {
-                    // Если эта операция отмечена как "последняя" - показываем последний номер
-                    if (markedLastIndex === i) {
-                        const lastNum = firstNum + (count - 1);
-                        input.value = String(lastNum).padStart(8, '0');
+            // Если "авто" включено, автоматически рассчитываем номера
+            if (isAutoEnabled) {
+                if (firstVal && firstVal.length > 0) {
+                    const firstNum = Number.parseInt(firstVal, 10);
+                    if (!Number.isNaN(firstNum)) {
+                        input.value = getOperationLabel(i, count);
                     } else {
-                        // Считаем позицию без учёта "последней"
-                        let position = i;
-                        if (markedLastIndex !== null && i > markedLastIndex) {
-                            position = i - 1;
-                        }
-                        input.value = String(firstNum + (position - 1)).padStart(8, '0');
+                        input.value = '';
                     }
                 } else {
                     input.value = '';
                 }
+                
+                // Если "авто" включено, поле должно быть заблокировано
+                input.disabled = true;
             } else {
-                input.value = '';
+                // Если "авто" выключено, оставляем значение как есть (пользователь может ввести вручную)
+                // Но если поле было заблокировано ранее, разблокируем его
+                input.disabled = false;
             }
         }
     }
@@ -2974,25 +3528,77 @@ function updateOpsCalculatedValues() {
 }
 
 function saveOperationIds() {
-    const firstInput = document.getElementById('op_id_1');
-    if (firstInput) {
-        let val = firstInput.value.trim();
-        if (val && val.length > 0 && val.length < 8) {
-            val = val.padStart(8, '0');
+    // Сохраняем ID для каждого блока
+    const blocks = Array.from(document.querySelectorAll('.op-block'));
+    const count = blocks.length;
+    for (let i = 1; i <= count; i++) {
+        const input = document.getElementById(`op_id_${i}`);
+        if (input && blocks[i - 1]) {
+            let val = input.value.trim();
+            if (val && val.length > 0 && val.length < 8) val = val.padStart(8, '0');
+            blocks[i - 1].dataset.opId = val;
         }
-        operationFirstId = val;
     }
-    
-    // Проверяем, какая галочка "последняя операция" выбрана
-    lastOperationIndex = null;
-    document.querySelectorAll('#opsInputList input[name="op_last"]').forEach(cb => {
-        if (cb.checked) {
-            lastOperationIndex = Number.parseInt(cb.dataset.opIndex, 10);
+
+    // Сохраняем метки "последняя" и "предпоследняя" в dataset блоков
+    blocks.forEach((b, idx) => {
+        const i = idx + 1;
+        if (i === lastOperationIndex) {
+            b.dataset.isLast = "true";
+        } else {
+            delete b.dataset.isLast;
+        }
+        if (i === penultimateOperationIndex) {
+            b.dataset.isPenultimate = "true";
+        } else {
+            delete b.dataset.isPenultimate;
         }
     });
-    
+
+    // Сохраняем состояние чекбокса "авто"
+    const autoCheckbox = document.getElementById('op_auto_checkbox');
+    if (autoCheckbox) {
+        autoIncrementEnabled = autoCheckbox.checked;
+    }
+
+    // Сортировка блоков
+    const sortMode = document.getElementById('opsSortMode').value;
+    if (sortMode === 'confirmation') {
+        blocks.sort((a, b) => {
+            const idA = Number(a.dataset.opId) || 0;
+            const idB = Number(b.dataset.opId) || 0;
+            return idA - idB;
+        });
+    } else {
+        // Sequential
+        blocks.sort((a, b) => {
+            const idxA = Number(a.dataset.originalIndex) || 0;
+            const idxB = Number(b.dataset.originalIndex) || 0;
+            return idxA - idxB;
+        });
+    }
+    const container = document.getElementById('fieldsContainer');
+    blocks.forEach(b => container.appendChild(b));
+
+    // Обновляем индексы на основе новой позиции (если была сортировка)
+    lastOperationIndex = null;
+    penultimateOperationIndex = null;
+    blocks.forEach((b, i) => {
+        if (b.dataset.isLast === "true") {
+            lastOperationIndex = i + 1;
+        }
+        if (b.dataset.isPenultimate === "true") {
+            penultimateOperationIndex = i + 1;
+        }
+    });
+
+    // Обновляем operationFirstId на основе нового первого блока
+    if (blocks[0] && blocks[0].dataset.opId) {
+        operationFirstId = blocks[0].dataset.opId;
+    }
+
     document.getElementById('opsModal').classList.remove('active');
-    
+
     // Перерисовываем поля операций с учётом "последней операции"
     renderFields();
     // Обновляем метки операций в основной части
@@ -3002,6 +3608,16 @@ function saveOperationIds() {
 function resetOperationIds() {
     operationFirstId = '';
     lastOperationIndex = null;
+    penultimateOperationIndex = null;
+    autoIncrementEnabled = false; // Сбрасываем состояние чекбокса "авто"
+    if (document.getElementById('opsSortMode')) document.getElementById('opsSortMode').value = 'sequential';
+    
+    // Сброс сортировки и ID
+    const blocks = Array.from(document.querySelectorAll('.op-block'));
+    blocks.sort((a, b) => (Number(a.dataset.originalIndex) || 0) - (Number(b.dataset.originalIndex) || 0));
+    const container = document.getElementById('fieldsContainer');
+    blocks.forEach(b => { delete b.dataset.opId; delete b.dataset.isLast; delete b.dataset.isPenultimate; container.appendChild(b); });
+
     renderOpsInputList();
     try { updateMainOperationLabels(); } catch (e) { /* ignore */ }
 }
@@ -3028,6 +3644,8 @@ document.getElementById('setOpsBtn').addEventListener('click', async () => {
             if (saveBtn) { saveBtn.disabled = true; saveBtn.classList.add('locked-control'); }
             const delBtn = document.getElementById('deleteCardBtn');
             if (delBtn) { delBtn.disabled = true; delBtn.classList.add('locked-control'); }
+            const analyzeBtn = document.getElementById('analyzeCardBtn');
+            if (analyzeBtn) { analyzeBtn.disabled = true; analyzeBtn.classList.add('locked-control'); }
         } catch (e) { console.debug?.('lock tech card controls failed', e?.message); }
     }
 
@@ -3038,12 +3656,6 @@ document.getElementById('setOpsBtn').addEventListener('click', async () => {
 
 document.getElementById('closeOpsModal').addEventListener('click', () => {
     document.getElementById('opsModal').classList.remove('active');
-});
-
-document.getElementById('opsModal').addEventListener('click', (e) => {
-    if (e.target.id === 'opsModal') {
-        document.getElementById('opsModal').classList.remove('active');
-    }
 });
 
 document.getElementById('saveOpsBtn').addEventListener('click', saveOperationIds);
@@ -3163,12 +3775,6 @@ document.getElementById('setWorkersBtn').addEventListener('click', async () => {
 
 document.getElementById('closeWorkersModal').addEventListener('click', () => {
     document.getElementById('workersModal').classList.remove('active');
-});
-
-document.getElementById('workersModal').addEventListener('click', (e) => {
-    if (e.target.id === 'workersModal') {
-        document.getElementById('workersModal').classList.remove('active');
-    }
 });
 
 document.getElementById('saveWorkersBtn').addEventListener('click', saveWorkerIds);
